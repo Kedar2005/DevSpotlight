@@ -1,72 +1,193 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, Code, Users, Zap } from "lucide-react";
+import { Terminal, Sparkles, ArrowRight, GitPullRequest, Code2, Layers } from "lucide-react";
 import { Button } from "../components/ui/button";
+import { useAuth } from "../hooks/useAuth";
+import { getProjects } from "../api/project.api";
+import { ProjectCard } from "../components/shared/ProjectCard";
+
+const steps = [
+  {
+    step: "01",
+    icon: Code2,
+    title: "Document & Publish",
+    desc: "Post your semester project, hackathon prototype, or personal build with screenshots, GitHub repo, and live demo links.",
+  },
+  {
+    step: "02",
+    icon: Layers,
+    title: "Tag Tech Stack",
+    desc: "Filter and discover peers by frameworks like React, Node.js, Flutter, and PyTorch so students with complementary skills connect.",
+  },
+  {
+    step: "03",
+    icon: GitPullRequest,
+    title: "Request Collaboration",
+    desc: "Need a frontend lead or backend teammate? Send a direct collaboration request with a note explaining how you want to contribute.",
+  },
+];
 
 export function Home() {
+  const { isAuthenticated } = useAuth();
+  const [featured, setFeatured] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    getProjects({ limit: 4 })
+      .then((res) => {
+        if (active && res?.projects) {
+          setFeatured(res.projects);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   return (
-    <div className="flex flex-col min-h-screen">
+    <div className="flex flex-col">
       {/* Hero Section */}
-      <section className="flex-1 flex flex-col items-center justify-center px-4 py-24 text-center md:py-32 lg:py-40">
-        <div className="max-w-[800px] space-y-8">
-          <div className="inline-flex items-center rounded-full border border-border/50 px-3 py-1 text-sm font-medium bg-muted/50 text-muted-foreground">
-            Welcome to DevSpotlight
+      <section className="border-b border-border bg-card">
+        <div className="mx-auto max-w-5xl px-4 py-16 sm:py-24">
+          <div className="inline-flex items-center gap-2 rounded border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+            <Terminal className="h-3.5 w-3.5" />
+            <span>Campus developer community</span>
           </div>
-          <h1 className="text-5xl font-extrabold tracking-tight sm:text-6xl md:text-7xl lg:text-8xl text-foreground drop-shadow-sm">
-            Showcase your <span className="text-muted-foreground">student projects</span>
+
+          <h1 className="mt-4 max-w-3xl text-3xl font-bold tracking-tight text-foreground sm:text-5xl sm:leading-tight">
+            The student platform for showcasing projects and finding collaborators.
           </h1>
-          <p className="mx-auto max-w-[650px] text-muted-foreground md:text-xl leading-relaxed">
-            Publish work, explore recent builds, and open contribution channels in one place. Join a community of student developers building the future.
+
+          <p className="mt-4 max-w-2xl text-base text-muted-foreground sm:text-lg">
+            Stop letting your college projects get lost on your hard drive. Publish your work, get genuine feedback from fellow students, and team up on your next build.
           </p>
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-6">
-            <Link to="/register">
-              <Button size="lg" className="h-12 px-8 text-base">
-                Get Started
-                <ArrowRight className="ml-2 h-4 w-4" />
+
+          <div className="mt-8 flex flex-wrap items-center gap-3">
+            <Button asChild size="lg">
+              <Link to="/feed">
+                Explore projects <ArrowRight className="h-4 w-4" />
+              </Link>
+            </Button>
+            {isAuthenticated ? (
+              <Button asChild variant="outline" size="lg">
+                <Link to="/dashboard">Go to dashboard</Link>
               </Button>
-            </Link>
-            <Link to="/feed">
-              <Button variant="outline" size="lg" className="h-12 px-8 text-base bg-background/50 border-border/60 shadow-sm">
-                Explore Projects
+            ) : (
+              <Button asChild variant="outline" size="lg">
+                <Link to="/register">Create profile</Link>
               </Button>
-            </Link>
+            )}
+          </div>
+
+          {/* Quick tech tags */}
+          <div className="mt-10 flex flex-wrap items-center gap-2 border-t border-border pt-6 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">Popular stacks:</span>
+            {["React", "Node.js", "Python", "MongoDB", "TypeScript", "TailwindCSS", "Next.js"].map((tech) => (
+              <Link
+                key={tech}
+                to={`/feed`}
+                className="rounded border border-border bg-background px-2 py-0.5 font-code hover:border-foreground/30 hover:text-foreground"
+              >
+                {tech}
+              </Link>
+            ))}
           </div>
         </div>
       </section>
 
-      {/* Features Section */}
-      <section className="border-t border-border bg-background py-24 lg:py-32">
-        <div className="container px-4 md:px-6 mx-auto">
-          <div className="grid gap-16 sm:grid-cols-2 lg:grid-cols-3">
-            <div className="flex flex-col items-center space-y-6 text-center">
-              <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-muted border border-border">
-                <Code className="h-8 w-8 text-foreground" />
-              </div>
-              <h3 className="text-xl font-bold text-foreground">Showcase Work</h3>
-              <p className="text-muted-foreground">Upload your latest projects with images, descriptions, and tech stacks for everyone to see.</p>
+      {/* Featured Projects Section */}
+      <section className="mx-auto w-full max-w-5xl px-4 py-14">
+        <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-primary">
+              <Sparkles className="h-3.5 w-3.5" />
+              <span>Recent Submissions</span>
             </div>
-            <div className="flex flex-col items-center space-y-6 text-center">
-              <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-muted border border-border">
-                <Users className="h-8 w-8 text-foreground" />
+            <h2 className="mt-1 text-2xl font-bold text-foreground">Featured student builds</h2>
+          </div>
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/feed">View all projects &rarr;</Link>
+          </Button>
+        </div>
+
+        {loading ? (
+          <div className="grid gap-6 sm:grid-cols-2">
+            {[...Array(2)].map((_, i) => (
+              <div key={i} className="h-80 animate-pulse rounded-lg border bg-muted/50" />
+            ))}
+          </div>
+        ) : featured.length > 0 ? (
+          <div className="grid gap-6 sm:grid-cols-2">
+            {featured.slice(0, 4).map((project) => (
+              <ProjectCard
+                key={project._id}
+                project={project}
+                onChange={(patch) =>
+                  setFeatured((list) =>
+                    list.map((p) => (p._id === project._id ? { ...p, ...patch } : p))
+                  )
+                }
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed py-12 text-center text-sm text-muted-foreground">
+            No projects published yet. Be the first to share one!
+          </div>
+        )}
+      </section>
+
+      {/* How it Works Section */}
+      <section className="border-t border-border bg-card/60 py-16">
+        <div className="mx-auto max-w-5xl px-4">
+          <div className="max-w-xl">
+            <h2 className="text-2xl font-bold text-foreground">How DevSpotlight works</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              A straightforward process designed specifically for student developers and academic project requirements.
+            </p>
+          </div>
+
+          <div className="mt-10 grid gap-8 sm:grid-cols-3">
+            {steps.map(({ step, icon: Icon, title, desc }) => (
+              <div key={step} className="rounded-lg border border-border bg-card p-6">
+                <div className="flex items-center justify-between">
+                  <span className="font-code text-xs font-bold text-primary">{step}</span>
+                  <div className="rounded border border-border p-2 text-muted-foreground">
+                    <Icon className="h-4 w-4" />
+                  </div>
+                </div>
+                <h3 className="mt-4 text-base font-semibold text-foreground">{title}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{desc}</p>
               </div>
-              <h3 className="text-xl font-bold text-foreground">Collaborate</h3>
-              <p className="text-muted-foreground">Open your projects to contributions. Allow other students to request access and help build.</p>
-            </div>
-            <div className="flex flex-col items-center space-y-6 text-center">
-              <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-muted border border-border">
-                <Zap className="h-8 w-8 text-foreground" />
-              </div>
-              <h3 className="text-xl font-bold text-foreground">Get Feedback</h3>
-              <p className="text-muted-foreground">Receive likes and comments on your work. Grow as a developer through community feedback.</p>
-            </div>
+            ))}
           </div>
         </div>
       </section>
 
-      <footer className="border-t py-6 md:py-0">
-        <div className="container flex flex-col items-center justify-between gap-4 md:h-24 md:flex-row px-4 mx-auto">
-          <p className="text-center text-sm leading-loose text-muted-foreground md:text-left">
-            Built for students. DevSpotlight Showcase Platform.
-          </p>
+      {/* Developer-Focused Footer */}
+      <footer className="border-t border-border bg-card py-10">
+        <div className="mx-auto flex max-w-5xl flex-col items-center justify-between gap-6 px-4 sm:flex-row">
+          <div className="flex items-center gap-2">
+            <div className="flex h-6 w-6 items-center justify-center rounded bg-primary/10 text-primary">
+              <Terminal className="h-3.5 w-3.5" />
+            </div>
+            <span className="text-sm font-semibold text-foreground">DevSpotlight</span>
+            <span className="text-xs text-muted-foreground">· Built by students, for students</span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-6 text-xs text-muted-foreground">
+            <Link to="/feed" className="hover:text-foreground">Browse Projects</Link>
+            <Link to="/register" className="hover:text-foreground">Create Account</Link>
+            <Link to="/login" className="hover:text-foreground">Log In</Link>
+            <a href="https://github.com" target="_blank" rel="noopener noreferrer" className="hover:text-foreground">
+              GitHub Community
+            </a>
+          </div>
         </div>
       </footer>
     </div>

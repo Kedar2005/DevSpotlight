@@ -5,11 +5,16 @@ import { ApiResponse } from "../utils/apiResponse.js";
 import { ApiError } from "../utils/apiError.js";
 import { User } from "../models/user.model.js";
 import { Project } from "../models/project.model.js";
-import { Contribution } from "../models/contribution.model.js";
+import { Like } from "../models/like.model.js";
+import { Comment } from "../models/comment.model.js";
+import { Favourite } from "../models/favourites.model.js";
+import { CollaborationRequest } from "../models/collaborationRequest.model.js";
+import { getEngagementCounts } from "../utils/projectViewer.js";
+import { normalizeOptionalUrl, parseStringArray } from "../utils/validators.js";
 import uploadOnCloudinary from "../utils/cloudinary.js";
 
 const updateProfile = asyncHandler(async (req, res) => {
-  const { userName, bio, email, fullName } = req.body;
+  const { userName, bio, email, fullName, skills, githubLink } = req.body;
   const updates = {};
 
   if (typeof userName === "string" && userName.trim()) {
@@ -23,6 +28,12 @@ const updateProfile = asyncHandler(async (req, res) => {
   }
   if (typeof bio === "string") {
     updates.bio = bio.trim();
+  }
+  if (skills !== undefined) {
+    updates.skills = parseStringArray(skills).slice(0, 20);
+  }
+  if (githubLink !== undefined) {
+    updates.githubLink = normalizeOptionalUrl(githubLink, "GitHub URL");
   }
 
   if (Object.keys(updates).length === 0 && !req.files?.avatar?.[0] && !req.files?.coverImage?.[0]) {
@@ -115,63 +126,102 @@ const changeCurrentPassword = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, {}, "Password is changed successfully"));
 });
 
+const OWNER_FIELDS = "userName fullName avatar";
+
+// Adds like/comment totals to lean project documents.
+const withCounts = async (projects) => {
+  const ids = projects.map((project) => project._id);
+  const { likeMap, commentMap } = await getEngagementCounts(ids, { Like, Comment });
+  return projects.map((project) => ({
+    ...project,
+    likeCount: likeMap.get(String(project._id)) ?? 0,
+    commentCount: commentMap.get(String(project._id)) ?? 0,
+  }));
+};
+
 const getMyProjects = asyncHandler(async (req, res) => {
-  const myProjects = await Project.aggregate([
-    {
-      $match: {
-        owner: new mongoose.Types.ObjectId(req.user._id),
-      },
-    },
-    {
-      $sort: { createdAt: -1 }, // optional: most recent first
-    },
-  ]);
+  const projects = await Project.find({ userId: req.user._id })
+    .sort({ createdAt: -1 })
+    .populate("userId", OWNER_FIELDS)
+    .lean();
 
   res
     .status(200)
-    .json(new ApiResponse(200, myProjects, "Projects fetched successfully"));
+    .json(
+      new ApiResponse(200, await withCounts(projects), "Projects fetched successfully")
+    );
 });
 
 const getMyFavoriteProjects = asyncHandler(async (req, res) => {
-  const myFavoriteProjects = await Favorite.aggregate([
-    {
-      $match: {
-        owner: new mongoose.Types.ObjectId(req.user._id),
-      },
-    },
-    {
-      $sort: { createdAt: -1 },
-    },
-  ]);
+  const favourites = await Favourite.find({ straredBy: req.user._id })
+    .sort({ _id: -1 })
+    .populate({ path: "project", populate: { path: "userId", select: OWNER_FIELDS } })
+    .lean();
+
+  const projects = favourites.map((item) => item.project).filter(Boolean);
 
   res
     .status(200)
     .json(
-      new ApiResponse(200, myProjects, "Favorite projects fetched successfully")
+      new ApiResponse(200, await withCounts(projects), "Favorite projects fetched successfully")
     );
 });
 
+// Projects the user collaborates on (their requests that were approved).
 const getMyContributedProjects = asyncHandler(async (req, res) => {
-  const myContributedProjects = await Contribution.aggregate([
-    {
-      $match: {
-        contributor: new mongoose.Types.ObjectId(req.user._id),
-      },
-    },
-    {
-      $sort: { createdAt: -1 },
-    },
-  ]);
+  const approved = await CollaborationRequest.find({
+    sender: req.user._id,
+    status: "approved",
+  })
+    .sort({ respondedAt: -1 })
+    .populate({ path: "project", populate: { path: "userId", select: OWNER_FIELDS } })
+    .lean();
+
+  const projects = approved.map((item) => item.project).filter(Boolean);
 
   res
     .status(200)
     .json(
-      new ApiResponse(
-        200,
-        myProjects,
-        "Contibution projects fetched successfully"
-      )
+      new ApiResponse(200, await withCounts(projects), "Contributed projects fetched successfully")
     );
+});
+
+// Public profile: GET /users/profile/:userName
+const getPublicProfile = asyncHandler(async (req, res) => {
+  const userName = `${req.params.userName ?? ""}`.trim().toLowerCase();
+  const user = await User.findOne({ userName }).select(
+    "userName fullName avatar coverImage bio skills githubLink createdAt"
+  ).lean();
+
+  if (!user) {
+    throw new ApiError(404, "User not found");
+  }
+
+  const [projects, collaborations] = await Promise.all([
+    Project.find({ userId: user._id })
+      .sort({ createdAt: -1 })
+      .populate("userId", OWNER_FIELDS)
+      .lean(),
+    CollaborationRequest.find({ sender: user._id, status: "approved" })
+      .sort({ respondedAt: -1 })
+      .limit(12)
+      .populate("project", "title")
+      .lean(),
+  ]);
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        user,
+        projects: await withCounts(projects),
+        collaborations: collaborations
+          .filter((item) => item.project)
+          .map((item) => ({ _id: item._id, project: item.project, since: item.respondedAt })),
+      },
+      "Profile fetched successfully"
+    )
+  );
 });
 
 const removeUserCoverImage = asyncHandler(async (req, res) => {
@@ -233,4 +283,5 @@ export {
   getMyProjects,
   getMyFavoriteProjects,
   getMyContributedProjects,
+  getPublicProfile,
 };

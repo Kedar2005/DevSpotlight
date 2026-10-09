@@ -58,6 +58,19 @@ const UserSchema = new Schema(
     coverImage: {
       type: String,
     },
+
+    skills: [
+      {
+        type: String,
+        trim: true,
+      },
+    ],
+
+    githubLink: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     projectList: [
       {
         type: Schema.Types.ObjectId,
@@ -77,6 +90,26 @@ const UserSchema = new Schema(
 
     refreshToken: {
       type: String,
+    },
+
+    // --- Password reset ---------------------------------------------------
+    // Only a SHA-256 hash of the emailed token is stored. The raw token is never
+    // persisted, and these fields are excluded from queries unless explicitly selected.
+    passwordResetToken: {
+      type: String,
+      select: false,
+    },
+    passwordResetExpires: {
+      type: Date,
+      select: false,
+    },
+    passwordResetRequestedAt: {
+      type: Date,
+      select: false,
+    },
+    // Access tokens issued before this moment are rejected (see verifyJWT).
+    passwordChangedAt: {
+      type: Date,
     },
   },
   { timestamps: true }

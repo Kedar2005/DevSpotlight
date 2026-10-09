@@ -1,20 +1,19 @@
 import { Outlet, Link } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { Code2 } from "lucide-react";
 
 export function AuthLayout() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-muted/40 p-4">
-      <Link to="/" className="absolute top-8 left-8 text-sm font-medium text-muted-foreground hover:text-foreground flex items-center gap-2">
-        <ArrowLeft className="h-4 w-4" />
-        Back to Home
+    <div className="flex min-h-screen flex-col items-center bg-background px-4 py-10 sm:justify-center">
+      <Link to="/" className="mb-6 flex items-center gap-2 text-lg font-semibold">
+        <Code2 className="h-5 w-5 text-primary" aria-hidden="true" />
+        DevSpotlight
       </Link>
       <div className="w-full max-w-md">
-        <div className="mb-8 text-center">
-          <h1 className="text-3xl font-bold tracking-tight">DevSpotlight</h1>
-          <p className="text-muted-foreground mt-2">Student project showcase platform</p>
-        </div>
         <Outlet />
       </div>
+      <Link to="/feed" className="mt-6 text-sm text-muted-foreground hover:text-foreground hover:underline">
+        Browse projects without an account
+      </Link>
     </div>
   );
 }

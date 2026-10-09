@@ -10,6 +10,7 @@ import {
   getMyProjects,
   getMyFavoriteProjects,
   getMyContributedProjects,
+  getPublicProfile,
 } from "../controllers/user.controller.js";
 
 import { Router } from "express";
@@ -38,6 +39,7 @@ router.route("/delete-profile").delete(deleteProfile);
 router.route("/my-profile").get(verifyJWT, getMyProfile);
 router.route("/my-projects").get(verifyJWT, getMyProjects);
 router.route("/my-favourites").get(verifyJWT, getMyFavoriteProjects);
+router.route("/profile/:userName").get(getPublicProfile);
 router.route("/my-contributions").get(verifyJWT, getMyContributedProjects);
 
 export default router;

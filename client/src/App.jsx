@@ -11,9 +11,14 @@ import { Dashboard } from "./pages/Dashboard";
 import { Profile } from "./pages/Profile";
 import { CreateProject } from "./pages/CreateProject";
 import { Notifications } from "./pages/Notifications";
-import { ContributionRequests } from "./pages/ContributionRequests";
+import { CollaborationRequests } from "./pages/CollaborationRequests";
+import { EditProject } from "./pages/EditProject";
+import { PublicProfile } from "./pages/PublicProfile";
+import { Workspace } from "./pages/Workspace";
 import { Login } from "./pages/auth/Login";
 import { Register } from "./pages/auth/Register";
+import { ForgotPassword } from "./pages/auth/ForgotPassword";
+import { ResetPassword } from "./pages/auth/ResetPassword";
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated, loading } = useAuth();
@@ -41,12 +46,19 @@ function App() {
           <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
           <Route path="/create-project" element={<ProtectedRoute><CreateProject /></ProtectedRoute>} />
           <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
-          <Route path="/requests" element={<ProtectedRoute><ContributionRequests /></ProtectedRoute>} />
+          <Route path="/requests" element={<ProtectedRoute><CollaborationRequests /></ProtectedRoute>} />
+          <Route path="/workspace/:projectId" element={<ProtectedRoute><Workspace /></ProtectedRoute>} />
+          <Route path="/project/:id/edit" element={<ProtectedRoute><EditProject /></ProtectedRoute>} />
+          <Route path="/explore" element={<Navigate to="/feed" replace />} />
+          <Route path="/project/new" element={<Navigate to="/create-project" replace />} />
+          <Route path="/u/:userName" element={<PublicProfile />} />
         </Route>
         
         <Route element={<AuthLayout />}>
           <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
           <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
+          <Route path="/forgot-password" element={<PublicRoute><ForgotPassword /></PublicRoute>} />
+          <Route path="/reset-password" element={<ResetPassword />} />
         </Route>
       </Routes>
     </Router>

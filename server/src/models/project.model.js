@@ -1,4 +1,5 @@
 import mongoose, { Schema } from "mongoose";
+import { PROJECT_CATEGORIES } from "../constants.js";
 
 const ProjectSchema = new Schema(
   {
@@ -10,6 +11,12 @@ const ProjectSchema = new Schema(
     description: {
       type: String,
       required: true,
+      trim: true,
+    },
+    category: {
+      type: String,
+      enum: PROJECT_CATEGORIES,
+      default: "Other",
       trim: true,
     },
     techStack: [
@@ -53,5 +60,6 @@ const ProjectSchema = new Schema(
 
 ProjectSchema.index({ createdAt: -1 });
 ProjectSchema.index({ userId: 1, createdAt: -1 });
+ProjectSchema.index({ category: 1, createdAt: -1 });
 
 export const Project = mongoose.model("Project", ProjectSchema);
