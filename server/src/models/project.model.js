@@ -25,6 +25,12 @@ const ProjectSchema = new Schema(
         trim: true,
       },
     ],
+    requiredSkills: [
+      {
+        type: String,
+        trim: true,
+      },
+    ],
     githubLink: {
       type: String,
       trim: true,

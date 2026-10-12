@@ -24,6 +24,7 @@ const buildProjectPayload = (project, extra = {}) => ({
   description: project.description,
   category: project.category || "Other",
   techStack: project.techStack,
+  requiredSkills: project.requiredSkills || [],
   githubLink: project.githubLink,
   liveLink: project.liveLink,
   images: project.images,
@@ -103,6 +104,7 @@ const createProject = asyncHandler(async (req, res) => {
       description: description.trim(),
       category: parseCategory(req.body.category),
       techStack: parseStringArray(req.body.techStack),
+      requiredSkills: parseStringArray(req.body.requiredSkills),
       githubLink: normalizeOptionalUrl(req.body.githubLink, "GitHub URL"),
       liveLink: normalizeOptionalUrl(req.body.liveLink, "Live demo URL"),
       keptImages,
@@ -308,6 +310,9 @@ const updateProject = asyncHandler(async (req, res) => {
     }
     if (body.techStack !== undefined) {
       updates.techStack = parseStringArray(body.techStack);
+    }
+    if (body.requiredSkills !== undefined) {
+      updates.requiredSkills = parseStringArray(body.requiredSkills);
     }
 
     // `existingImages` is what the edit form sends: the URLs the owner chose to keep

@@ -8,12 +8,17 @@ import {
   getProjectById,
   getAllProjects,
 } from "../controllers/project.controller.js";
+import { getTeammateRecommendations } from "../controllers/recommendation.controller.js";
 const router = Router();
 
 router
   .route("/")
   .post(verifyJWT, upload.array("images", 6), createProject)
   .get(optionalVerifyJWT, getAllProjects);
+
+router
+  .route("/:projectId/recommendations")
+  .get(verifyJWT, getTeammateRecommendations);
 
 // PATCH is the existing method; PUT is accepted as an alias for the same handler.
 router

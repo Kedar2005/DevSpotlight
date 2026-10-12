@@ -1,0 +1,555 @@
+import { useEffect, useState, useMemo } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import {
+  Sparkles,
+  Users,
+  Check,
+  X,
+  Clock,
+  ExternalLink,
+  PlusCircle,
+  Pencil,
+  RotateCw,
+  FolderGit2,
+  AlertCircle,
+  Search,
+} from "lucide-react";
+import { getMyProjects } from "../api/project.api";
+import { getTeammateRecommendations } from "../api/recommendation.api";
+import { getErrorMessage } from "../lib/errors";
+import { Avatar } from "../components/ui/avatar";
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { Select } from "../components/ui/select";
+import { Input } from "../components/ui/input";
+import { Alert } from "../components/ui/alert";
+import { Card, CardContent } from "../components/ui/card";
+
+export function FindTeammates() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialProjectId = searchParams.get("projectId") || "";
+
+  const [projects, setProjects] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState(initialProjectId);
+  const [loadingProjects, setLoadingProjects] = useState(true);
+  const [projectsError, setProjectsError] = useState("");
+
+  const [recommendationData, setRecommendationData] = useState(null);
+  const [loadingRecs, setLoadingRecs] = useState(Boolean(initialProjectId));
+  const [recsError, setRecsError] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Load user's projects on mount
+  useEffect(() => {
+    let active = true;
+    getMyProjects()
+      .then((myProjects) => {
+        if (!active) return;
+        setProjects(myProjects || []);
+        if (myProjects && myProjects.length > 0) {
+          // If query param matches one of the user's projects, keep it; otherwise pick first
+          const exists = myProjects.some((p) => p._id === initialProjectId);
+          const chosenId = exists ? initialProjectId : myProjects[0]._id;
+          setSelectedProjectId(chosenId);
+          setLoadingRecs(true);
+        }
+      })
+      .catch((err) => {
+        if (!active) return;
+        setProjectsError(getErrorMessage(err, "Failed to load your projects."));
+      })
+      .finally(() => {
+        if (active) setLoadingProjects(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [initialProjectId]);
+
+  // Sync selected project ID into URL query param
+  const handleSelectProject = (projectId) => {
+    setSelectedProjectId(projectId);
+    setSearchParams(projectId ? { projectId } : {});
+    setLoadingRecs(Boolean(projectId));
+    setRecsError("");
+    if (!projectId) {
+      setRecommendationData(null);
+    }
+  };
+
+  // Fetch recommendations whenever selectedProjectId changes
+  useEffect(() => {
+    if (!selectedProjectId) return;
+
+    let active = true;
+
+    getTeammateRecommendations(selectedProjectId)
+      .then((data) => {
+        if (!active) return;
+        setRecommendationData(data);
+      })
+      .catch((err) => {
+        if (!active) return;
+        setRecsError(
+          getErrorMessage(err, "Failed to fetch teammate recommendations.")
+        );
+      })
+      .finally(() => {
+        if (active) setLoadingRecs(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [selectedProjectId]);
+
+  const selectedProject = useMemo(() => {
+    return projects.find((p) => p._id === selectedProjectId) || null;
+  }, [projects, selectedProjectId]);
+
+  // Filter recommendations by candidate name/skills search query
+  const filteredRecommendations = useMemo(() => {
+    const list = recommendationData?.recommendations || [];
+    if (!searchQuery.trim()) return list;
+    const query = searchQuery.trim().toLowerCase();
+    return list.filter((student) => {
+      const name = (student.fullName || "").toLowerCase();
+      const username = (student.userName || "").toLowerCase();
+      const skillsMatch = (student.skills || []).some((s) =>
+        s.toLowerCase().includes(query)
+      );
+      return name.includes(query) || username.includes(query) || skillsMatch;
+    });
+  }, [recommendationData?.recommendations, searchQuery]);
+
+  return (
+    <div className="mx-auto w-full max-w-6xl p-4 sm:p-6 lg:p-8 space-y-6">
+      {/* Page Header */}
+      <div className="flex flex-col gap-2 border-b border-border pb-6 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary mb-2">
+            <Sparkles className="h-3.5 w-3.5" />
+            <span>AI Teammate Recommendation</span>
+          </div>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
+            Find Teammates
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Discover student collaborators whose skills match your project's technical requirements.
+          </p>
+        </div>
+
+        {projects.length > 0 && (
+          <Button asChild variant="outline" size="sm">
+            <Link to="/create-project">
+              <PlusCircle className="mr-1.5 h-4 w-4" />
+              New Project
+            </Link>
+          </Button>
+        )}
+      </div>
+
+      {projectsError && <Alert tone="error">{projectsError}</Alert>}
+
+      {/* Loading Projects State */}
+      {loadingProjects ? (
+        <div className="flex items-center justify-center p-12 text-sm text-muted-foreground">
+          <RotateCw className="mr-2 h-4 w-4 animate-spin" />
+          Loading your projects…
+        </div>
+      ) : projects.length === 0 ? (
+        /* Empty State: User has no projects */
+        <Card className="border-border">
+          <CardContent className="flex flex-col items-center justify-center p-10 text-center space-y-4">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+              <FolderGit2 className="h-6 w-6" />
+            </div>
+            <div>
+              <h2 className="text-base font-semibold text-foreground">
+                No Projects Found
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground max-w-md">
+                You haven't created any projects yet. Create a project and specify required skills to discover matching teammates.
+              </p>
+            </div>
+            <Button asChild>
+              <Link to="/create-project">
+                <PlusCircle className="mr-1.5 h-4 w-4" />
+                Create a Project
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        /* Project Selection and Recommendations Section */
+        <div className="space-y-6">
+          {/* Project Selector Bar */}
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-border bg-card p-4">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full sm:w-auto">
+              <label
+                htmlFor="project-select"
+                className="text-xs font-semibold uppercase tracking-wider text-muted-foreground shrink-0"
+              >
+                Select Project:
+              </label>
+              <Select
+                id="project-select"
+                value={selectedProjectId}
+                onChange={(e) => handleSelectProject(e.target.value)}
+                className="w-full sm:w-72 bg-background"
+              >
+                {projects.map((p) => (
+                  <option key={p._id} value={p._id}>
+                    {p.title} ({p.category || "General"})
+                  </option>
+                ))}
+              </Select>
+            </div>
+
+            {selectedProject && (
+              <div className="flex items-center gap-2">
+                <Button asChild variant="outline" size="sm">
+                  <Link to={`/project/${selectedProject._id}`}>
+                    <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+                    View Project
+                  </Link>
+                </Button>
+                <Button asChild variant="outline" size="sm">
+                  <Link to={`/project/${selectedProject._id}/edit`}>
+                    <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                    Edit Skills
+                  </Link>
+                </Button>
+              </div>
+            )}
+          </div>
+
+          {/* Project Skills Summary Card */}
+          {selectedProject && (
+            <div className="rounded-lg border border-border bg-muted/40 p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Required Skills:
+                  </span>
+                  {recommendationData?.project?.requiredSkills?.length > 0 ? (
+                    <span className="text-xs font-medium text-foreground">
+                      ({recommendationData.project.requiredSkills.length} defined)
+                    </span>
+                  ) : null}
+                </div>
+
+                <Link
+                  to={`/project/${selectedProject._id}/edit`}
+                  className="text-xs font-medium text-primary hover:underline inline-flex items-center gap-1"
+                >
+                  <Pencil className="h-3 w-3" />
+                  Update required skills
+                </Link>
+              </div>
+
+              {recommendationData?.project?.requiredSkills?.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {recommendationData.project.requiredSkills.map((skill) => (
+                    <Badge
+                      key={skill}
+                      variant="default"
+                      className="font-code text-xs bg-primary/10 text-primary border-primary/20 hover:bg-primary/20"
+                    >
+                      {skill}
+                    </Badge>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded border border-warning/30 bg-warning/10 p-3 text-xs text-warning">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <span>
+                      This project does not have any required skills defined yet. Add required skills so our matching algorithm can recommend student collaborators.
+                    </span>
+                  </div>
+                  <Button asChild size="sm" variant="outline" className="border-warning/30 text-warning hover:bg-warning/20 shrink-0">
+                    <Link to={`/project/${selectedProject._id}/edit`}>
+                      Add Required Skills
+                    </Link>
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Error Message */}
+          {recsError && (
+            <Alert tone="error">
+              <div className="flex items-center justify-between w-full">
+                <span>{recsError}</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setSelectedProjectId((prev) => prev)}
+                >
+                  Retry
+                </Button>
+              </div>
+            </Alert>
+          )}
+
+          {/* Loading Recommendations */}
+          {loadingRecs ? (
+            <div className="flex flex-col items-center justify-center p-16 text-sm text-muted-foreground space-y-2">
+              <RotateCw className="h-6 w-6 animate-spin text-primary" />
+              <p>Analyzing student profiles and matching skills…</p>
+            </div>
+          ) : recommendationData && recommendationData.hasRequiredSkills === false ? (
+            /* Helpful Message when required skills are missing */
+            <Card className="border-dashed border-border bg-card">
+              <CardContent className="flex flex-col items-center justify-center p-10 text-center space-y-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                  <Sparkles className="h-5 w-5" />
+                </div>
+                <h3 className="text-base font-semibold text-foreground">
+                  Define Required Skills to Get Recommendations
+                </h3>
+                <p className="text-xs text-muted-foreground max-w-md">
+                  Specify the technologies, languages, or frameworks your project needs (e.g. React, Python, Docker). We'll find student developers who have those skills in their profile.
+                </p>
+                <Button asChild size="sm">
+                  <Link to={`/project/${selectedProjectId}/edit`}>
+                    <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                    Edit Project to Add Skills
+                  </Link>
+                </Button>
+              </CardContent>
+            </Card>
+          ) : recommendationData && recommendationData.recommendations ? (
+            /* Recommendations Loaded */
+            <div className="space-y-4">
+              {/* Filter and Count Row */}
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <p className="text-xs font-medium text-muted-foreground">
+                  Found{" "}
+                  <strong className="text-foreground">
+                    {filteredRecommendations.length}
+                  </strong>{" "}
+                  potential student {filteredRecommendations.length === 1 ? "collaborator" : "collaborators"}
+                </p>
+
+                {recommendationData.recommendations.length > 0 && (
+                  <div className="relative w-full sm:w-64">
+                    <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+                    <Input
+                      placeholder="Filter by name or skill…"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="pl-8 h-8 text-xs bg-background"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {filteredRecommendations.length === 0 ? (
+                /* No Candidates Match State */
+                <Card className="border-border bg-card">
+                  <CardContent className="flex flex-col items-center justify-center p-10 text-center space-y-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                      <Users className="h-5 w-5" />
+                    </div>
+                    <h3 className="text-sm font-semibold text-foreground">
+                      {recommendationData.totalEligibleStudents === 0
+                        ? "No Other Students Registered Yet"
+                        : "No Matching Collaborators Found"}
+                    </h3>
+                    <p className="text-xs text-muted-foreground max-w-md">
+                      {searchQuery
+                        ? "No students match your filter search. Try clearing the filter."
+                        : recommendationData.totalEligibleStudents === 0
+                        ? "No other student developer profiles currently exist in the database. When students register and add skills to their profiles, they will be matched here."
+                        : "No students currently have matching skills for this project's requirements. Try broadening the required skills or check back as more students update their profile skills."}
+                    </p>
+                  </CardContent>
+                </Card>
+              ) : (
+                /* Student Recommendation Cards Grid */
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {filteredRecommendations.map((student) => {
+                    const matchPercent = student.matchPercentage || 0;
+                    const isHighMatch = matchPercent >= 75;
+                    const isMedMatch = matchPercent >= 40 && matchPercent < 75;
+
+                    return (
+                      <Card
+                        key={student._id}
+                        className="flex flex-col justify-between border-border bg-card hover:border-border/80 transition-shadow"
+                      >
+                        <CardContent className="p-5 space-y-4">
+                          {/* Student Header */}
+                          <div className="flex items-start justify-between gap-3">
+                            <Link
+                              to={`/u/${student.userName}`}
+                              className="flex items-start gap-3 group"
+                            >
+                              <Avatar user={student} size="md" />
+                              <div className="space-y-0.5">
+                                <h3 className="text-sm font-semibold text-foreground group-hover:text-primary transition-colors leading-tight">
+                                  {student.fullName || `@${student.userName}`}
+                                </h3>
+                                <p className="font-code text-xs text-muted-foreground">
+                                  @{student.userName}
+                                </p>
+                              </div>
+                            </Link>
+
+                            {/* Match Percentage Badge */}
+                            <div className="flex flex-col items-end gap-1 shrink-0">
+                              <span
+                                className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold font-code border ${
+                                  isHighMatch
+                                    ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/25 dark:text-emerald-400"
+                                    : isMedMatch
+                                    ? "bg-amber-500/10 text-amber-600 border-amber-500/25 dark:text-amber-400"
+                                    : "bg-muted text-muted-foreground border-border"
+                                }`}
+                              >
+                                {matchPercent}% Match
+                              </span>
+                              <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full ${
+                                    isHighMatch
+                                      ? "bg-emerald-500"
+                                      : isMedMatch
+                                      ? "bg-amber-500"
+                                      : "bg-muted-foreground"
+                                  }`}
+                                  style={{ width: `${matchPercent}%` }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Student Bio */}
+                          {student.bio && (
+                            <p className="text-xs text-foreground/80 line-clamp-2 leading-relaxed">
+                              {student.bio}
+                            </p>
+                          )}
+
+                          {/* Skills Comparison Section */}
+                          <div className="space-y-2.5 pt-1 border-t border-border/60">
+                            {/* Matching Skills */}
+                            <div>
+                              <div className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+                                <Check className="h-3 w-3 text-emerald-500" />
+                                <span>
+                                  Matching Skills ({student.matchingSkills?.length || 0})
+                                </span>
+                              </div>
+                              {student.matchingSkills?.length > 0 ? (
+                                <div className="flex flex-wrap gap-1">
+                                  {student.matchingSkills.map((skill) => (
+                                    <Badge
+                                      key={skill}
+                                      variant="success"
+                                      className="font-code text-[11px] py-0 px-1.5"
+                                    >
+                                      ✓ {skill}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-[11px] text-muted-foreground italic">
+                                  No matching required skills
+                                </p>
+                              )}
+                            </div>
+
+                            {/* Missing Skills */}
+                            {student.missingSkills?.length > 0 && (
+                              <div>
+                                <div className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+                                  <X className="h-3 w-3 text-muted-foreground" />
+                                  <span>
+                                    Missing Skills ({student.missingSkills.length})
+                                  </span>
+                                </div>
+                                <div className="flex flex-wrap gap-1">
+                                  {student.missingSkills.map((skill) => (
+                                    <Badge
+                                      key={skill}
+                                      variant="outline"
+                                      className="font-code text-[11px] py-0 px-1.5 text-muted-foreground border-dashed"
+                                    >
+                                      {skill}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* All Student Profile Skills */}
+                            {student.skills?.length > 0 && (
+                              <div>
+                                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+                                  Profile Skills:
+                                </p>
+                                <div className="flex flex-wrap gap-1 max-h-14 overflow-y-auto">
+                                  {student.skills.map((skill) => (
+                                    <Badge
+                                      key={skill}
+                                      variant="tech"
+                                      className="text-[10px] py-0 px-1.5"
+                                    >
+                                      {skill}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Card Footer Actions */}
+                          <div className="pt-3 border-t border-border flex flex-wrap items-center justify-between gap-2">
+                            {/* Existing Collaboration Status */}
+                            <div>
+                              {student.collaborationStatus === "pending" && (
+                                <Badge variant="warning" className="gap-1 text-xs">
+                                  <Clock className="h-3 w-3" />
+                                  Request Pending
+                                </Badge>
+                              )}
+                              {student.collaborationStatus === "approved" && (
+                                <Badge variant="success" className="gap-1 text-xs">
+                                  <Check className="h-3 w-3" />
+                                  Active Collaborator
+                                </Badge>
+                              )}
+                              {student.collaborationStatus === "rejected" && (
+                                <Badge variant="danger" className="gap-1 text-xs">
+                                  <X className="h-3 w-3" />
+                                  Request Rejected
+                                </Badge>
+                              )}
+                            </div>
+
+                            {/* View Profile Action */}
+                            <Button asChild variant="outline" size="sm" className="ml-auto">
+                              <Link to={`/u/${student.userName}`}>
+                                View Profile
+                                <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+                              </Link>
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}

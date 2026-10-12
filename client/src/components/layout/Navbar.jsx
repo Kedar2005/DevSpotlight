@@ -2,7 +2,7 @@ import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../../hooks/useAuth";
 import { Button } from "../ui/button";
 import { Avatar } from "../ui/avatar";
-import { Terminal, LogOut, Menu, Plus, Compass } from "lucide-react";
+import { Terminal, LogOut, Menu, Plus, Compass, Sparkles } from "lucide-react";
 
 export function Navbar({ onMenuClick }) {
   const { user, isAuthenticated, logout } = useAuth();
@@ -34,6 +34,17 @@ export function Navbar({ onMenuClick }) {
               <Compass className="h-3.5 w-3.5" />
               Explore
             </Link>
+            {isAuthenticated && (
+              <Link
+                to="/find-teammates"
+                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                  pathname === "/find-teammates" ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                }`}
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                Find Teammates
+              </Link>
+            )}
           </nav>
         </div>
 

@@ -34,6 +34,7 @@ export function ProjectForm({ initial, submitLabel, submittingLabel, onSubmit, o
     description: initial?.description || "",
     category: initial?.category || "Web app",
     techStack: initial?.techStack?.join(", ") || "",
+    requiredSkills: initial?.requiredSkills?.join(", ") || "",
     githubLink: initial?.githubLink || "",
     liveLink: initial?.liveLink || "",
   });
@@ -117,6 +118,20 @@ export function ProjectForm({ initial, submitLabel, submittingLabel, onSubmit, o
                 />
               </Field>
             </div>
+
+            <Field
+              id="requiredSkills"
+              label="Required Skills for Teammates"
+              hint="Comma-separated (used for AI Teammate Recommendations)"
+            >
+              <Input
+                id="requiredSkills"
+                placeholder="e.g. React, Node.js, TypeScript, UI/UX"
+                value={values.requiredSkills}
+                onChange={handleChange}
+                className="bg-background font-code text-xs"
+              />
+            </Field>
 
             <Field id="description" label="Detailed Description" required hint="Markdown or plain text">
               <Textarea

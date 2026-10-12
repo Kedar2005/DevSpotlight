@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, Link, useLocation, useNavigate } from "react-router-dom";
 import { formatDistanceToNow, format } from "date-fns";
-import { GitBranch, ExternalLink, Heart, MessageSquare, Pencil, Eye, Tag, Users, Calendar, ArrowLeft } from "lucide-react";
+import { GitBranch, ExternalLink, Heart, MessageSquare, Pencil, Eye, Tag, Users, Calendar, ArrowLeft, Sparkles } from "lucide-react";
 import { getProjectById, toggleProjectLike } from "../api/project.api";
 import { getProjectComments, addComment } from "../api/comment.api";
 import { useAuth } from "../hooks/useAuth";
@@ -161,12 +161,20 @@ function ProjectDetailsView({ id }) {
             )}
 
             {isOwner ? (
-              <Button asChild variant="outline" size="sm">
-                <Link to={`/project/${project._id}/edit`}>
-                  <Pencil className="mr-1.5 h-3.5 w-3.5" />
-                  Edit Project
-                </Link>
-              </Button>
+              <>
+                <Button asChild variant="outline" size="sm">
+                  <Link to={`/find-teammates?projectId=${project._id}`}>
+                    <Sparkles className="mr-1.5 h-3.5 w-3.5 text-primary" />
+                    Find Teammates
+                  </Link>
+                </Button>
+                <Button asChild variant="outline" size="sm">
+                  <Link to={`/project/${project._id}/edit`}>
+                    <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                    Edit Project
+                  </Link>
+                </Button>
+              </>
             ) : (
               <RequestCollaboration
                 project={project}
@@ -407,6 +415,37 @@ function ProjectDetailsView({ id }) {
                 {project.techStack.map((tech) => (
                   <Badge key={tech} variant="tech">
                     {tech}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Required Skills for Collaboration */}
+          {project.requiredSkills?.length > 0 && (
+            <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <Sparkles className="h-3.5 w-3.5 text-primary" />
+                  Looking For Skills
+                </h3>
+                {isOwner && (
+                  <Link
+                    to={`/find-teammates?projectId=${project._id}`}
+                    className="text-[11px] font-medium text-primary hover:underline"
+                  >
+                    Find Teammates →
+                  </Link>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {project.requiredSkills.map((skill) => (
+                  <Badge
+                    key={skill}
+                    variant="default"
+                    className="bg-primary/10 text-primary border-primary/20"
+                  >
+                    {skill}
                   </Badge>
                 ))}
               </div>
