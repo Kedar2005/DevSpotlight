@@ -14,3 +14,7 @@ coverage/
 
 # Logs
 *.log
+
+# Backups
+backups/
+server/backups/

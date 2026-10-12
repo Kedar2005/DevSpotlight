@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "../../lib/utils";
-import { LayoutDashboard, Compass, User, Users, Bell } from "lucide-react";
+import { LayoutDashboard, Compass, User, Users, Bell, Sparkles } from "lucide-react";
 import { useAuth } from "../../hooks/useAuth";
 import { getReceivedRequests } from "../../api/collaboration.api";
 
@@ -13,6 +13,7 @@ const guestNavItems = [
 const authNavItems = [
   { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { title: "Explore projects", href: "/feed", icon: Compass },
+  { title: "Find Teammates", href: "/find-teammates", icon: Sparkles },
   { title: "Collaboration", href: "/requests", icon: Users, badgeKey: "pending" },
   { title: "Notifications", href: "/notifications", icon: Bell },
   { title: "My profile", href: "/profile", icon: User },

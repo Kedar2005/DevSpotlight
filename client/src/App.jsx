@@ -15,6 +15,7 @@ import { CollaborationRequests } from "./pages/CollaborationRequests";
 import { EditProject } from "./pages/EditProject";
 import { PublicProfile } from "./pages/PublicProfile";
 import { Workspace } from "./pages/Workspace";
+import { FindTeammates } from "./pages/FindTeammates";
 import { Login } from "./pages/auth/Login";
 import { Register } from "./pages/auth/Register";
 import { ForgotPassword } from "./pages/auth/ForgotPassword";
@@ -47,6 +48,7 @@ function App() {
           <Route path="/create-project" element={<ProtectedRoute><CreateProject /></ProtectedRoute>} />
           <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
           <Route path="/requests" element={<ProtectedRoute><CollaborationRequests /></ProtectedRoute>} />
+          <Route path="/find-teammates" element={<ProtectedRoute><FindTeammates /></ProtectedRoute>} />
           <Route path="/workspace/:projectId" element={<ProtectedRoute><Workspace /></ProtectedRoute>} />
           <Route path="/project/:id/edit" element={<ProtectedRoute><EditProject /></ProtectedRoute>} />
           <Route path="/explore" element={<Navigate to="/feed" replace />} />
