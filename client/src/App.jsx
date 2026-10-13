@@ -52,6 +52,7 @@ function App() {
           <Route path="/workspace/:projectId" element={<ProtectedRoute><Workspace /></ProtectedRoute>} />
           <Route path="/project/:id/edit" element={<ProtectedRoute><EditProject /></ProtectedRoute>} />
           <Route path="/explore" element={<Navigate to="/feed" replace />} />
+          <Route path="/settings" element={<ProtectedRoute><Navigate to="/profile" replace /></ProtectedRoute>} />
           <Route path="/project/new" element={<Navigate to="/create-project" replace />} />
           <Route path="/u/:userName" element={<PublicProfile />} />
         </Route>
