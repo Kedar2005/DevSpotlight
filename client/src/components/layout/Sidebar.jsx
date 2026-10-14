@@ -10,6 +10,8 @@ import {
   User,
   Settings,
   LogOut,
+  Trophy,
+  ShieldAlert,
 } from "lucide-react";
 import { useAuth } from "../../hooks/useAuth";
 import { getReceivedRequests } from "../../api/collaboration.api";
@@ -17,12 +19,14 @@ import { getReceivedRequests } from "../../api/collaboration.api";
 const guestNavItems = [
   { title: "Home", href: "/", icon: Compass },
   { title: "Explore Projects", href: "/feed", icon: LayoutDashboard },
+  { title: "Hackathons", href: "/hackathons", icon: Trophy },
 ];
 
 const authNavItems = [
   { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { title: "Explore Projects", href: "/feed", icon: Compass },
   { title: "Find Teammates", href: "/find-teammates", icon: Sparkles },
+  { title: "Hackathons", href: "/hackathons", icon: Trophy },
   { title: "Collaboration", href: "/requests", icon: Users, badgeKey: "pending" },
   { title: "Notifications", href: "/notifications", icon: Bell, badgeKey: "pending" },
   { title: "My Profile", href: "/profile", icon: User },
@@ -208,6 +212,20 @@ export function Sidebar({ collapsed = false, mobileOpen = false, onNavigate }) {
                     <Users className="h-3.5 w-3.5 text-muted-foreground" />
                     <span>Collaboration Requests</span>
                   </Link>
+
+                  {user?.role === "admin" && (
+                    <Link
+                      to="/admin"
+                      onClick={() => {
+                        setSettingsOpen(false);
+                        onNavigate?.();
+                      }}
+                      className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-indigo-400 hover:bg-indigo-500/10 transition-colors font-semibold"
+                    >
+                      <ShieldAlert className="h-3.5 w-3.5" />
+                      <span>Admin Dashboard</span>
+                    </Link>
+                  )}
                 </div>
 
                 <div className="border-t border-border/60 p-1">

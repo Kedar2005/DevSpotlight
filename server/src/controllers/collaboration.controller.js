@@ -3,6 +3,7 @@ import { asyncHandler } from "../utils/asyncHandlers.js";
 import { ApiError } from "../utils/apiError.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import { Project } from "../models/project.model.js";
+import { User } from "../models/user.model.js";
 import { CollaborationRequest } from "../models/collaborationRequest.model.js";
 import { COLLABORATION_STATUSES } from "../constants.js";
 
@@ -24,8 +25,8 @@ const assertValidId = (id, label) => {
 
 const isDuplicateKeyError = (error) => error?.code === 11000;
 
-// POST /collaboration-requests            body: { projectId, message? }
-// POST /collaboration-requests/project/:projectId   body: { message? }   (legacy path)
+// POST /collaboration-requests            body: { projectId, message?, recipientId? }
+// POST /collaboration-requests/project/:projectId   body: { message?, recipientId? }   (legacy path)
 // The sender ALWAYS comes from the JWT (req.user); any sender id in the body is ignored.
 const sendCollaborationRequest = asyncHandler(async (req, res) => {
   const projectId = req.params.projectId ?? req.body?.projectId;
@@ -46,15 +47,43 @@ const sendCollaborationRequest = asyncHandler(async (req, res) => {
   }
 
   const senderId = req.user._id;
-  const receiverId = project.userId;
+  const isOwner = String(project.userId) === String(senderId);
 
-  if (String(receiverId) === String(senderId)) {
-    throw new ApiError(400, "You can't request collaboration on your own project");
+  let receiverId;
+
+  if (isOwner) {
+    // Project owner sending an invitation / request to a candidate teammate
+    const targetRecipientId = req.body?.recipientId ?? req.body?.receiverId;
+    if (!targetRecipientId) {
+      throw new ApiError(
+        400,
+        "Recipient student ID is required when inviting a teammate to your project"
+      );
+    }
+    assertValidId(targetRecipientId, "recipient");
+
+    if (String(targetRecipientId) === String(senderId)) {
+      throw new ApiError(400, "You cannot send a collaboration request to yourself");
+    }
+
+    const recipientUser = await User.findById(targetRecipientId).select("_id isBanned");
+    if (!recipientUser || recipientUser.isBanned) {
+      throw new ApiError(404, "Recipient user not found or unavailable");
+    }
+
+    receiverId = recipientUser._id;
+  } else {
+    // Student requesting to join a project owned by someone else
+    receiverId = project.userId;
   }
 
+  // Prevent duplicate requests: check both directions between this user and candidate on this project
   const existing = await CollaborationRequest.findOne({
     project: project._id,
-    sender: senderId,
+    $or: [
+      { sender: senderId, receiver: receiverId },
+      { sender: receiverId, receiver: senderId },
+    ],
     status: { $in: ["pending", "approved"] },
   }).select("status");
 
@@ -62,8 +91,12 @@ const sendCollaborationRequest = asyncHandler(async (req, res) => {
     throw new ApiError(
       409,
       existing.status === "pending"
-        ? "You already have a pending request for this project"
-        : "You're already a collaborator on this project"
+        ? isOwner
+          ? "A pending collaboration request already exists for this student on this project"
+          : "You already have a pending request for this project"
+        : isOwner
+          ? "This student is already a collaborator on this project"
+          : "You're already a collaborator on this project"
     );
   }
 
@@ -78,7 +111,10 @@ const sendCollaborationRequest = asyncHandler(async (req, res) => {
   } catch (error) {
     // Two simultaneous clicks: the partial unique index rejects the second one.
     if (isDuplicateKeyError(error)) {
-      throw new ApiError(409, "You already have a pending request for this project");
+      throw new ApiError(
+        409,
+        "A pending collaboration request already exists for this student on this project"
+      );
     }
     throw error;
   }
@@ -87,7 +123,7 @@ const sendCollaborationRequest = asyncHandler(async (req, res) => {
 
   return res
     .status(201)
-    .json(new ApiResponse(201, populated, "Collaboration request sent"));
+    .json(new ApiResponse(201, populated, "Collaboration request sent successfully"));
 });
 
 const buildListFilter = (base, statusQuery) => {
@@ -103,7 +139,7 @@ const buildListFilter = (base, statusQuery) => {
   return { ...base, status: statusQuery };
 };
 
-// GET /collaboration-requests/received  - requests on projects the logged-in user owns
+// GET /collaboration-requests/received  - requests received by the logged-in user
 const getReceivedRequests = asyncHandler(async (req, res) => {
   const filter = buildListFilter({ receiver: req.user._id }, req.query.status);
   const requests = await populateRequest(
@@ -149,9 +185,8 @@ const getProjectRequests = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, requests, "Project requests fetched successfully"));
 });
 
-// Shared by approve and reject. Only the receiver (project owner) may respond, and only
-// while the request is pending. The status change is a single atomic update, so two
-// quick clicks (or an approve racing a reject) can't both succeed.
+// Shared by approve and reject. Only the designated receiver may respond, and only
+// while the request is pending. The status change is a single atomic update.
 const respondToRequest = (nextStatus) =>
   asyncHandler(async (req, res) => {
     const { requestId } = req.params;
@@ -164,13 +199,11 @@ const respondToRequest = (nextStatus) =>
       throw new ApiError(404, "Collaboration request not found");
     }
 
-    // Authorise against the project's current owner as well as the stored receiver.
-    const project = await Project.findById(request.project).select("userId");
-    const ownerId = project?.userId ?? request.receiver;
-    if (String(ownerId) !== String(req.user._id)) {
+    const isRecipient = String(request.receiver) === String(req.user._id);
+    if (!isRecipient) {
       throw new ApiError(
         403,
-        `Only the project owner can ${nextStatus === "approved" ? "approve" : "reject"} this request`
+        `Only the recipient can ${nextStatus === "approved" ? "approve" : "reject"} this request`
       );
     }
 

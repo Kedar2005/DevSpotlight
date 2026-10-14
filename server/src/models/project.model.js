@@ -56,6 +56,24 @@ const ProjectSchema = new Schema(
       type: Boolean,
       default: true,
     },
+    isDeleted: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    deletedAt: {
+      type: Date,
+      default: null,
+    },
+    moderatedBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    moderationReason: {
+      type: String,
+      default: "",
+    },
     visits: {
       type: Number,
       default: 0,
@@ -67,5 +85,6 @@ const ProjectSchema = new Schema(
 ProjectSchema.index({ createdAt: -1 });
 ProjectSchema.index({ userId: 1, createdAt: -1 });
 ProjectSchema.index({ category: 1, createdAt: -1 });
+ProjectSchema.index({ isDeleted: 1, isPublished: 1, createdAt: -1 });
 
 export const Project = mongoose.model("Project", ProjectSchema);

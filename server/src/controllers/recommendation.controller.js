@@ -27,11 +27,11 @@ export const getTeammateRecommendations = asyncHandler(async (req, res) => {
   }
 
   const project = await Project.findById(projectId).select(
-    "title category techStack requiredSkills userId"
+    "title category techStack requiredSkills userId isDeleted"
   );
 
-  if (!project) {
-    throw new ApiError(404, "Project not found");
+  if (!project || project.isDeleted) {
+    throw new ApiError(404, "Project not found or unavailable");
   }
 
   // Only the project owner can view teammate recommendations.
@@ -99,19 +99,22 @@ export const getTeammateRecommendations = asyncHandler(async (req, res) => {
     CollaborationRequest.find({
       project: project._id,
     })
-      .select("sender status createdAt respondedAt")
+      .select("sender receiver status createdAt respondedAt")
       .sort({ createdAt: -1 })
       .lean(),
   ]);
 
-  // Keep the latest collaboration request for each sender.
+  // Keep the latest collaboration request for each candidate student.
   const requestStatusMap = new Map();
 
   collaborationRequests.forEach((request) => {
-    const senderKey = String(request.sender);
+    const candidateId =
+      String(request.sender) === String(project.userId)
+        ? String(request.receiver)
+        : String(request.sender);
 
-    if (!requestStatusMap.has(senderKey)) {
-      requestStatusMap.set(senderKey, {
+    if (!requestStatusMap.has(candidateId)) {
+      requestStatusMap.set(candidateId, {
         _id: request._id,
         status: request.status,
         createdAt: request.createdAt,

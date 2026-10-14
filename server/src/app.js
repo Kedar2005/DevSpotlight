@@ -58,6 +58,7 @@ import commentRouter from "./routes/comment.routes.js";
 import authRouter from "./routes/auth.routes.js";
 import adminRouter from "./routes/admin.routes.js";
 import workspaceRouter from "./routes/workspace.routes.js";
+import hackathonRouter from "./routes/hackathon.routes.js";
 
 //define routes
 app.use("/api/v1/users", userRouter);
@@ -70,4 +71,5 @@ app.use("/api/v1/contributions", collaborationRouter);
 app.use("/api/v1/workspace", workspaceRouter);
 app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/admin", adminRouter);
+app.use("/api/v1/hackathons", hackathonRouter);
 export { app };

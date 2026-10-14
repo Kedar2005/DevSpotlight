@@ -31,6 +31,11 @@ const resolveUserFromToken = async (token) => {
     throw new ApiError(401, "Your password was changed. Please sign in again.");
   }
 
+  if (user.isSuspended || user.isBanned) {
+    const reason = user.suspendedReason ? `: ${user.suspendedReason}` : "";
+    throw new ApiError(403, `Your account has been suspended${reason}. Please contact support.`);
+  }
+
   return user;
 };
 
@@ -45,9 +50,24 @@ const verifyJWT = asyncHandler(async (req, _, next) => {
     req.user = await resolveUserFromToken(token);
     next();
   } catch (error) {
-    throw new ApiError(401, error?.message || "Invalid access token");
+    const statusCode = error?.statusCode || 401;
+    throw new ApiError(statusCode, error?.message || "Invalid access token");
   }
 });
+
+/**
+ * Reusable role check middleware for admin-only endpoints.
+ * Requires verifyJWT to have run first.
+ */
+export const requireAdmin = (req, _res, next) => {
+  if (!req.user) {
+    throw new ApiError(401, "Authentication required");
+  }
+  if (req.user.role !== "admin") {
+    throw new ApiError(403, "Access denied. Administrator privileges required.");
+  }
+  next();
+};
 
 /**
  * For public endpoints that can personalise their response (e.g. "did I like this?").

@@ -151,7 +151,7 @@ const getAllProjects = asyncHandler(async (req, res) => {
   const skip = (page - 1) * limit;
   const query = req.query.query?.trim();
   const category = parseCategory(req.query.category);
-  const match = {};
+  const match = { isDeleted: { $ne: true } };
 
   if (query) {
     const pattern = escapeRegex(query);
@@ -220,8 +220,8 @@ const getProjectById = asyncHandler(async (req, res) => {
     "userName fullName avatar bio githubLink"
   );
 
-  if (!project) {
-    throw new ApiError(404, "Project not found");
+  if (!project || (project.isDeleted && req.user?.role !== "admin")) {
+    throw new ApiError(404, "Project not found or removed by moderation");
   }
 
   // $inc without timestamps so a page view doesn't look like an edit (updatedAt).

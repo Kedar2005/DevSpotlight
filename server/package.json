@@ -19,7 +19,8 @@
   "description": "a project showacase platform for devs",
   "main": "src/index.js",
   "scripts": {
-    "dev": "nodemon -r dotenv/config --experimental-json-modules src/index.js"
+    "dev": "nodemon -r dotenv/config --experimental-json-modules src/index.js",
+    "bootstrap:admin": "node scripts/bootstrapAdmin.js"
   },
   "type": "module",
   "author": "vishwadeep sankpal",

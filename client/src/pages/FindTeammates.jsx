@@ -13,9 +13,12 @@ import {
   FolderGit2,
   AlertCircle,
   Search,
+  UserPlus,
+  Send,
 } from "lucide-react";
 import { getMyProjects } from "../api/project.api";
 import { getTeammateRecommendations } from "../api/recommendation.api";
+import { sendCollaborationRequest } from "../api/collaboration.api";
 import { getErrorMessage } from "../lib/errors";
 import { Avatar } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
@@ -24,6 +27,8 @@ import { Select } from "../components/ui/select";
 import { Input } from "../components/ui/input";
 import { Alert } from "../components/ui/alert";
 import { Card, CardContent } from "../components/ui/card";
+import { Modal } from "../components/ui/modal";
+import { Textarea } from "../components/ui/textarea";
 
 export function FindTeammates() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -38,6 +43,98 @@ export function FindTeammates() {
   const [loadingRecs, setLoadingRecs] = useState(Boolean(initialProjectId));
   const [recsError, setRecsError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Collaboration request state
+  const [requestModalOpen, setRequestModalOpen] = useState(false);
+  const [targetStudent, setTargetStudent] = useState(null);
+  const [inviteMessage, setInviteMessage] = useState("");
+  const [sendingInvite, setSendingInvite] = useState(false);
+  const [inviteError, setInviteError] = useState("");
+  const [actionSuccess, setActionSuccess] = useState("");
+  const [actionError, setActionError] = useState("");
+
+  const handleOpenInviteModal = (student) => {
+    setTargetStudent(student);
+    setInviteMessage("");
+    setInviteError("");
+    setRequestModalOpen(true);
+  };
+
+  const handleCloseInviteModal = () => {
+    if (sendingInvite) return;
+    setRequestModalOpen(false);
+    setTargetStudent(null);
+    setInviteMessage("");
+    setInviteError("");
+  };
+
+  const handleSendInvite = async (e) => {
+    e?.preventDefault();
+    if (!targetStudent || !selectedProjectId) return;
+
+    setSendingInvite(true);
+    setInviteError("");
+
+    try {
+      const savedRequest = await sendCollaborationRequest(
+        selectedProjectId,
+        inviteMessage,
+        targetStudent._id
+      );
+
+      // Immediately update student's status on card without refreshing page
+      setRecommendationData((prev) => {
+        if (!prev || !prev.recommendations) return prev;
+        return {
+          ...prev,
+          recommendations: prev.recommendations.map((item) => {
+            if (item._id === targetStudent._id) {
+              return {
+                ...item,
+                collaborationStatus: "pending",
+                collaborationRequest: savedRequest,
+              };
+            }
+            return item;
+          }),
+        };
+      });
+
+      const studentName = targetStudent.fullName || `@${targetStudent.userName}`;
+      const projectTitle = selectedProject?.title || "your project";
+      setActionSuccess(`Collaboration request sent to ${studentName} for "${projectTitle}".`);
+      setActionError("");
+      setRequestModalOpen(false);
+      setTargetStudent(null);
+      setInviteMessage("");
+    } catch (err) {
+      const msg = getErrorMessage(err, "Couldn't send the collaboration request.");
+      setInviteError(msg);
+
+      // If already pending or approved, update UI to reflect that status
+      if (err.response?.status === 409) {
+        const errorDetail = err.response?.data?.message || "";
+        const isApproved = errorDetail.toLowerCase().includes("already a collaborator");
+        setRecommendationData((prev) => {
+          if (!prev || !prev.recommendations) return prev;
+          return {
+            ...prev,
+            recommendations: prev.recommendations.map((item) => {
+              if (item._id === targetStudent._id) {
+                return {
+                  ...item,
+                  collaborationStatus: isApproved ? "approved" : "pending",
+                };
+              }
+              return item;
+            }),
+          };
+        });
+      }
+    } finally {
+      setSendingInvite(false);
+    }
+  };
 
   // Load user's projects on mount
   useEffect(() => {
@@ -104,9 +201,7 @@ export function FindTeammates() {
     };
   }, [selectedProjectId]);
 
-  const selectedProject = useMemo(() => {
-    return projects.find((p) => p._id === selectedProjectId) || null;
-  }, [projects, selectedProjectId]);
+  const selectedProject = projects.find((p) => p._id === selectedProjectId) || null;
 
   // Filter recommendations by candidate name/skills search query
   const filteredRecommendations = useMemo(() => {
@@ -325,6 +420,32 @@ export function FindTeammates() {
           ) : recommendationData && recommendationData.recommendations ? (
             /* Recommendations Loaded */
             <div className="space-y-4">
+              {actionSuccess && (
+                <Alert tone="success" className="flex items-center justify-between">
+                  <span>{actionSuccess}</span>
+                  <button
+                    type="button"
+                    onClick={() => setActionSuccess("")}
+                    className="text-xs font-semibold hover:underline cursor-pointer ml-3 shrink-0"
+                  >
+                    Dismiss
+                  </button>
+                </Alert>
+              )}
+
+              {actionError && (
+                <Alert tone="error" className="flex items-center justify-between">
+                  <span>{actionError}</span>
+                  <button
+                    type="button"
+                    onClick={() => setActionError("")}
+                    className="text-xs font-semibold hover:underline cursor-pointer ml-3 shrink-0"
+                  >
+                    Dismiss
+                  </button>
+                </Alert>
+              )}
+
               {/* Filter and Count Row */}
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                 <p className="text-xs font-medium text-muted-foreground">
@@ -511,7 +632,7 @@ export function FindTeammates() {
                           {/* Card Footer Actions */}
                           <div className="pt-3 border-t border-border flex flex-wrap items-center justify-between gap-2">
                             {/* Existing Collaboration Status */}
-                            <div>
+                            <div className="flex items-center gap-1.5">
                               {student.collaborationStatus === "pending" && (
                                 <Badge variant="warning" className="gap-1 text-xs">
                                   <Clock className="h-3 w-3" />
@@ -532,13 +653,49 @@ export function FindTeammates() {
                               )}
                             </div>
 
-                            {/* View Profile Action */}
-                            <Button asChild variant="outline" size="sm" className="ml-auto">
-                              <Link to={`/u/${student.userName}`}>
-                                View Profile
-                                <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
-                              </Link>
-                            </Button>
+                            {/* Buttons: Request Collaboration & View Profile */}
+                            <div className="flex items-center gap-2 ml-auto">
+                              {student.collaborationStatus === "pending" ? (
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  disabled
+                                  className="text-xs font-medium cursor-not-allowed"
+                                >
+                                  <Clock className="mr-1.5 h-3.5 w-3.5" />
+                                  Request Pending
+                                </Button>
+                              ) : student.collaborationStatus === "approved" ? (
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  disabled
+                                  className="text-xs font-medium cursor-not-allowed"
+                                >
+                                  <Check className="mr-1.5 h-3.5 w-3.5 text-success" />
+                                  Collaborator
+                                </Button>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleOpenInviteModal(student)}
+                                  className="text-xs font-medium"
+                                >
+                                  <UserPlus className="mr-1.5 h-3.5 w-3.5" />
+                                  {student.collaborationStatus === "rejected"
+                                    ? "Request Again"
+                                    : "Request Collaboration"}
+                                </Button>
+                              )}
+
+                              {/* View Profile Action */}
+                              <Button asChild variant="outline" size="sm">
+                                <Link to={`/u/${student.userName}`}>
+                                  View Profile
+                                  <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+                                </Link>
+                              </Button>
+                            </div>
                           </div>
                         </CardContent>
                       </Card>
@@ -550,6 +707,60 @@ export function FindTeammates() {
           ) : null}
         </div>
       )}
+
+      {/* Collaboration Request Invitation Modal */}
+      <Modal
+        open={requestModalOpen}
+        onClose={handleCloseInviteModal}
+        title="Request Collaboration"
+        description={
+          targetStudent
+            ? `Invite ${targetStudent.fullName || `@${targetStudent.userName}`} to collaborate on "${selectedProject?.title}".`
+            : "Invite teammate to collaborate"
+        }
+      >
+        <form onSubmit={handleSendInvite} className="space-y-4">
+          {inviteError && <Alert tone="error">{inviteError}</Alert>}
+
+          <div className="space-y-1.5">
+            <label htmlFor="invite-message" className="text-sm font-medium">
+              Invitation Note <span className="font-normal text-muted-foreground">(optional)</span>
+            </label>
+            <Textarea
+              id="invite-message"
+              rows={4}
+              maxLength={500}
+              value={inviteMessage}
+              onChange={(e) => setInviteMessage(e.target.value)}
+              placeholder="Hi, I noticed your skills match our project requirements and would love to collaborate with you on this project."
+              className="resize-none"
+            />
+            <p className="text-right text-xs text-muted-foreground">{inviteMessage.length}/500</p>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2 border-t border-border">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleCloseInviteModal}
+              disabled={sendingInvite}
+            >
+              <X className="mr-1.5 h-4 w-4" /> Cancel
+            </Button>
+            <Button type="submit" disabled={sendingInvite}>
+              {sendingInvite ? (
+                <>
+                  <RotateCw className="mr-1.5 h-4 w-4 animate-spin" /> Sending…
+                </>
+              ) : (
+                <>
+                  <Send className="mr-1.5 h-4 w-4" /> Send Request
+                </>
+              )}
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

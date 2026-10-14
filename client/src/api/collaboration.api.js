@@ -1,7 +1,11 @@
 import http from "./http";
 
-export const sendCollaborationRequest = async (projectId, message = "") => {
-  const { data } = await http.post("/collaboration-requests", { projectId, message });
+export const sendCollaborationRequest = async (projectId, message = "", recipientId = null) => {
+  const payload = { projectId, message };
+  if (recipientId) {
+    payload.recipientId = recipientId;
+  }
+  const { data } = await http.post("/collaboration-requests", payload);
   return data.data;
 };
 
