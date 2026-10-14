@@ -76,7 +76,13 @@ export function RequestItem({ request, direction, onUpdate, onRemove }) {
               </div>
 
               <p className="mt-0.5 text-xs text-muted-foreground">
-                {direction === "incoming" ? "requested to collaborate on " : "You requested to join "}
+                {direction === "incoming"
+                  ? String(project?.userId) === String(request.sender?._id)
+                    ? "invited you to collaborate on "
+                    : "requested to collaborate on "
+                  : String(project?.userId) === String(request.sender?._id)
+                    ? "You invited to collaborate on "
+                    : "You requested to join "}
                 {project ? (
                   <Link
                     to={`/project/${project._id}`}

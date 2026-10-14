@@ -42,11 +42,11 @@ const collaborationRequestSchema = new Schema(
   { timestamps: true }
 );
 
-// A sender can only have ONE pending request per project at a time. Rejected and
+// A pair of users can only have ONE pending request per project at a time. Rejected and
 // approved requests are kept as history, so this is a partial unique index. It is the
 // database-level guard behind the application-level duplicate check (handles races).
 collaborationRequestSchema.index(
-  { project: 1, sender: 1 },
+  { project: 1, sender: 1, receiver: 1 },
   { unique: true, partialFilterExpression: { status: "pending" } }
 );
 collaborationRequestSchema.index({ receiver: 1, status: 1, createdAt: -1 });

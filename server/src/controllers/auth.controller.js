@@ -18,9 +18,11 @@ const sanitizeUser = (user) => ({
   skills: user.skills,
   githubLink: user.githubLink,
   createdAt: user.createdAt,
-  role: user.role,
-  skills: user.skills,
-  githubLink: user.githubLink,
+  role: user.role === "admin" ? "admin" : "student",
+  college: user.college || null,
+  collegeName: user.collegeName || "",
+  isSuspended: Boolean(user.isSuspended || user.isBanned),
+  suspendedReason: user.suspendedReason || "",
 });
 
 const generateAccessAndRefreshToken = async (userId) => {
@@ -112,6 +114,11 @@ const loginUser = asyncHandler(async (req, res) => {
   const isPasswordCorrect = await user.isPasswordCorrect(password);
   if (!isPasswordCorrect) {
     throw new ApiError(400, "Invalid credentials");
+  }
+
+  if (user.isSuspended || user.isBanned) {
+    const reason = user.suspendedReason ? `: ${user.suspendedReason}` : "";
+    throw new ApiError(403, `Your account has been suspended${reason}. Please contact support.`);
   }
 
   const { accessToken, refreshToken } = await generateAccessAndRefreshToken(

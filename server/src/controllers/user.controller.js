@@ -14,7 +14,7 @@ import { normalizeOptionalUrl, parseStringArray } from "../utils/validators.js";
 import uploadOnCloudinary from "../utils/cloudinary.js";
 
 const updateProfile = asyncHandler(async (req, res) => {
-  const { userName, bio, email, fullName, skills, githubLink } = req.body;
+  const { userName, bio, email, fullName, skills, githubLink, college, collegeName } = req.body;
   const updates = {};
 
   if (typeof userName === "string" && userName.trim()) {
@@ -34,6 +34,14 @@ const updateProfile = asyncHandler(async (req, res) => {
   }
   if (githubLink !== undefined) {
     updates.githubLink = normalizeOptionalUrl(githubLink, "GitHub URL");
+  }
+  if (college && mongoose.isValidObjectId(college)) {
+    updates.college = college;
+  } else if (college === null || college === "") {
+    updates.college = null;
+  }
+  if (typeof collegeName === "string") {
+    updates.collegeName = collegeName.trim();
   }
 
   if (Object.keys(updates).length === 0 && !req.files?.avatar?.[0] && !req.files?.coverImage?.[0]) {

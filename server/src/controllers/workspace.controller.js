@@ -28,7 +28,7 @@ export const assertWorkspaceMember = async (projectId, userId) => {
   if (!isOwner) {
     const approvedRequest = await CollaborationRequest.findOne({
       project: projectId,
-      sender: userId,
+      $or: [{ sender: userId }, { receiver: userId }],
       status: "approved",
     });
 
@@ -46,7 +46,26 @@ export const assertWorkspaceMember = async (projectId, userId) => {
     status: "approved",
   })
     .populate("sender", USER_SELECT)
+    .populate("receiver", USER_SELECT)
     .lean();
+
+  const collaboratorMembers = approvedCollabs
+    .map((c) => {
+      // The collaborator is whichever user is not the project owner
+      const isSenderOwner = String(c.sender?._id) === String(project.userId._id);
+      const collaborator = isSenderOwner ? c.receiver : c.sender;
+      if (!collaborator) return null;
+      return {
+        _id: collaborator._id,
+        userName: collaborator.userName,
+        fullName: collaborator.fullName,
+        avatar: collaborator.avatar,
+        email: collaborator.email,
+        role: "Collaborator",
+        acceptedAt: c.respondedAt || c.updatedAt,
+      };
+    })
+    .filter(Boolean);
 
   const members = [
     {
@@ -57,17 +76,7 @@ export const assertWorkspaceMember = async (projectId, userId) => {
       email: project.userId.email,
       role: "Owner",
     },
-    ...approvedCollabs
-      .filter((c) => c.sender)
-      .map((c) => ({
-        _id: c.sender._id,
-        userName: c.sender.userName,
-        fullName: c.sender.fullName,
-        avatar: c.sender.avatar,
-        email: c.sender.email,
-        role: "Collaborator",
-        acceptedAt: c.respondedAt || c.updatedAt,
-      })),
+    ...collaboratorMembers,
   ];
 
   return { project, isOwner, members };

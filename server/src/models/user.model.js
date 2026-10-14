@@ -12,21 +12,50 @@ const UserSchema = new Schema(
       trim: true,
       index: true,
     },
-   role : {
-       type: String,
-    enum: ['user', 'admin'],
-    default: 'user'
-     },
+    role: {
+      type: String,
+      enum: ["student", "admin", "user"],
+      default: "student",
+      index: true,
+    },
 
-     isBanned: { 
-      type: Boolean, 
-      default: false
-     },
+    college: {
+      type: Schema.Types.ObjectId,
+      ref: "College",
+      default: null,
+    },
 
-     banExpiresAt: { 
+    collegeName: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    isBanned: {
+      type: Boolean,
+      default: false,
+    },
+
+    banExpiresAt: {
       type: Date,
-       default: null
-       },
+      default: null,
+    },
+
+    isSuspended: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    suspendedReason: {
+      type: String,
+      default: "",
+    },
+
+    suspendedAt: {
+      type: Date,
+      default: null,
+    },
 
     bio: {
       type: String,
@@ -133,6 +162,7 @@ UserSchema.methods.generateAccessToken = function () {
       email: this.email,
       userName: this.userName,
       fullName: this.fullName,
+      role: this.role === "admin" ? "admin" : "student",
     },
     process.env.ACCESS_TOKEN_SECRET,
     {
