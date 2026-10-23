@@ -10,7 +10,14 @@ import { Comment } from "../models/comment.model.js";
 import { Favourite } from "../models/favourites.model.js";
 import { CollaborationRequest } from "../models/collaborationRequest.model.js";
 import { getEngagementCounts } from "../utils/projectViewer.js";
-import { normalizeOptionalUrl, parseStringArray } from "../utils/validators.js";
+import {
+  normalizeOptionalUrl,
+  parseStringArray,
+  isValidEmail,
+  isValidUsername,
+  isValidPassword,
+  PASSWORD_MIN_LENGTH,
+} from "../utils/validators.js";
 import uploadOnCloudinary from "../utils/cloudinary.js";
 
 const updateProfile = asyncHandler(async (req, res) => {
@@ -42,6 +49,14 @@ const updateProfile = asyncHandler(async (req, res) => {
   }
   if (typeof collegeName === "string") {
     updates.collegeName = collegeName.trim();
+  }
+
+  // Only check values that change, so older accounts can still save the rest of their profile.
+  if (updates.userName && updates.userName !== req.user.userName && !isValidUsername(updates.userName)) {
+    throw new ApiError(400, "Username must be 3–30 characters: lowercase letters, numbers, underscores or periods");
+  }
+  if (updates.email && updates.email !== req.user.email && !isValidEmail(updates.email)) {
+    throw new ApiError(400, "Enter a valid email address");
   }
 
   if (Object.keys(updates).length === 0 && !req.files?.avatar?.[0] && !req.files?.coverImage?.[0]) {
@@ -105,7 +120,7 @@ const updateProfile = asyncHandler(async (req, res) => {
 });
 
 const getMyProfile = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.user._id).select("-password");
+  const user = await User.findById(req.user._id).select("-password -refreshToken");
 
   if (!user) {
     throw new ApiError(404, "User not found");
@@ -119,19 +134,42 @@ const getMyProfile = asyncHandler(async (req, res) => {
 const changeCurrentPassword = asyncHandler(async (req, res) => {
   const { oldPassword, newPassword } = req.body;
 
-  const user = await User.findById(req.user?._id);
-  const isPasswordCorrect = await user.isPasswordCorrect(oldPassword);
-
-  if (!isPasswordCorrect) {
-    throw new ApiError(400, "Invalid old password");
+  if (typeof oldPassword !== "string" || !oldPassword) {
+    throw new ApiError(400, "Enter your current password");
+  }
+  if (!isValidPassword(newPassword)) {
+    throw new ApiError(400, `New password must be at least ${PASSWORD_MIN_LENGTH} characters`);
+  }
+  if (oldPassword === newPassword) {
+    throw new ApiError(400, "New password must be different from the current one");
   }
 
+  const user = await User.findById(req.user._id);
+  if (!user || !(await user.isPasswordCorrect(oldPassword))) {
+    throw new ApiError(400, "Current password is incorrect");
+  }
+
+  // Hashed by the model's pre-save hook. passwordChangedAt makes every older token invalid
+  // (see verifyJWT), so other devices are signed out; this session gets fresh tokens below.
   user.password = newPassword;
+  user.passwordChangedAt = new Date();
+  const accessToken = user.generateAccessToken();
+  const refreshToken = user.generateRefreshToken();
+  user.refreshToken = refreshToken;
   await user.save({ validateBeforeSave: false });
 
+  const cookieOptions = { httpOnly: true, secure: true };
   return res
     .status(200)
-    .json(new ApiResponse(200, {}, "Password is changed successfully"));
+    .cookie("accessToken", accessToken, cookieOptions)
+    .cookie("refreshToken", refreshToken, cookieOptions)
+    .json(
+      new ApiResponse(
+        200,
+        { accessToken, refreshToken },
+        "Password changed. Other devices have been signed out."
+      )
+    );
 });
 
 const OWNER_FIELDS = "userName fullName avatar";
@@ -177,15 +215,24 @@ const getMyFavoriteProjects = asyncHandler(async (req, res) => {
 
 // Projects the user collaborates on (their requests that were approved).
 const getMyContributedProjects = asyncHandler(async (req, res) => {
+  // Either side of an approved request (asked to join, or was invited), but never your own project.
   const approved = await CollaborationRequest.find({
-    sender: req.user._id,
+    $or: [{ sender: req.user._id }, { receiver: req.user._id }],
     status: "approved",
   })
     .sort({ respondedAt: -1 })
     .populate({ path: "project", populate: { path: "userId", select: OWNER_FIELDS } })
     .lean();
 
-  const projects = approved.map((item) => item.project).filter(Boolean);
+  const seen = new Set();
+  const projects = approved
+    .map((item) => item.project)
+    .filter((project) => {
+      if (!project || String(project.userId?._id) === String(req.user._id)) return false;
+      if (seen.has(String(project._id))) return false;
+      seen.add(String(project._id));
+      return true;
+    });
 
   res
     .status(200)
@@ -265,28 +312,11 @@ const removeUserAvatar = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, user, "Avatar image removed succesfully"));
 });
 
-const deleteProfile = asyncHandler(async (req, res) => {
-  const userId = req.user._id;
-
-  const user = await User.findByIdAndDelete(userId);
-
-  if (!user) {
-    throw new ApiError(404, "User not found");
-  }
-
-  res
-    .status(200)
-    .json(
-      new ApiResponse(200, null, "Your account has been deleted successfully")
-    );
-});
-
 export {
   updateProfile,
   changeCurrentPassword,
   removeUserAvatar,
   removeUserCoverImage,
-  deleteProfile,
   getMyProfile,
   getMyProjects,
   getMyFavoriteProjects,

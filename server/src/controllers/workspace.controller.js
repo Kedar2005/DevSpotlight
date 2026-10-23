@@ -5,6 +5,7 @@ import { ApiResponse } from "../utils/apiResponse.js";
 import { Project } from "../models/project.model.js";
 import { CollaborationRequest } from "../models/collaborationRequest.model.js";
 import { WorkspaceTask, WorkspaceMessage } from "../models/workspace.model.js";
+import { getProjectCollaborators } from "../utils/projectMembers.js";
 
 const USER_SELECT = "userName fullName avatar email";
 
@@ -41,31 +42,12 @@ export const assertWorkspaceMember = async (projectId, userId) => {
   }
 
   // Retrieve all approved collaborators
-  const approvedCollabs = await CollaborationRequest.find({
-    project: projectId,
-    status: "approved",
-  })
-    .populate("sender", USER_SELECT)
-    .populate("receiver", USER_SELECT)
-    .lean();
-
-  const collaboratorMembers = approvedCollabs
-    .map((c) => {
-      // The collaborator is whichever user is not the project owner
-      const isSenderOwner = String(c.sender?._id) === String(project.userId._id);
-      const collaborator = isSenderOwner ? c.receiver : c.sender;
-      if (!collaborator) return null;
-      return {
-        _id: collaborator._id,
-        userName: collaborator.userName,
-        fullName: collaborator.fullName,
-        avatar: collaborator.avatar,
-        email: collaborator.email,
-        role: "Collaborator",
-        acceptedAt: c.respondedAt || c.updatedAt,
-      };
-    })
-    .filter(Boolean);
+  const collaborators = await getProjectCollaborators(projectId, project.userId._id, USER_SELECT);
+  const collaboratorMembers = collaborators.map(({ since, ...collaborator }) => ({
+    ...collaborator,
+    role: "Collaborator",
+    acceptedAt: since,
+  }));
 
   const members = [
     {
@@ -142,12 +124,21 @@ export const getWorkspaceDetails = asyncHandler(async (req, res) => {
   );
 });
 
+// Tasks can only go to someone on the team (owner or approved collaborator); empty = unassigned.
+const teamAssignee = (members, assignedTo) => {
+  if (!assignedTo) return null;
+  if (!members.some((m) => String(m._id) === String(assignedTo))) {
+    throw new ApiError(400, "Tasks can only be assigned to team members");
+  }
+  return assignedTo;
+};
+
 // POST /api/v1/workspace/:projectId/tasks
 export const createWorkspaceTask = asyncHandler(async (req, res) => {
   const { projectId } = req.params;
   const { title, description, assignedTo, status } = req.body;
 
-  await assertWorkspaceMember(projectId, req.user._id);
+  const { members } = await assertWorkspaceMember(projectId, req.user._id);
 
   if (!title || !title.trim()) {
     throw new ApiError(400, "Task title is required");
@@ -158,7 +149,7 @@ export const createWorkspaceTask = asyncHandler(async (req, res) => {
     title: title.trim(),
     description: (description || "").trim(),
     status: ["todo", "in_progress", "completed"].includes(status) ? status : "todo",
-    assignedTo: mongoose.isValidObjectId(assignedTo) ? assignedTo : null,
+    assignedTo: teamAssignee(members, assignedTo),
     createdBy: req.user._id,
   });
 
@@ -176,7 +167,7 @@ export const updateWorkspaceTask = asyncHandler(async (req, res) => {
   const { projectId, taskId } = req.params;
   const { title, description, assignedTo, status } = req.body;
 
-  await assertWorkspaceMember(projectId, req.user._id);
+  const { members } = await assertWorkspaceMember(projectId, req.user._id);
 
   if (!mongoose.isValidObjectId(taskId)) {
     throw new ApiError(400, "Invalid task id");
@@ -204,7 +195,7 @@ export const updateWorkspaceTask = asyncHandler(async (req, res) => {
   }
 
   if (assignedTo !== undefined) {
-    task.assignedTo = mongoose.isValidObjectId(assignedTo) ? assignedTo : null;
+    task.assignedTo = teamAssignee(members, assignedTo);
   }
 
   await task.save();

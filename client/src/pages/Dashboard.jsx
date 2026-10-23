@@ -50,10 +50,18 @@ export function Dashboard() {
 
   const pending = incoming.filter((request) => request.status === "pending");
   const totalLikes = projects.reduce((sum, project) => sum + (project.likeCount || 0), 0);
-  const collaborations = sent.filter((request) => request.status === "approved").length;
+  // Projects of others you joined, whether you asked or were invited (same rule as the server).
+  const collaborations = new Set(
+    [...sent, ...incoming]
+      .filter((r) => r.status === "approved" && r.project && String(r.project.userId) !== String(user?._id))
+      .map((r) => String(r.project._id))
+  ).size;
 
   const displayName = user?.fullName || user?.name || user?.userName || "Developer";
   const firstName = displayName.split(" ")[0];
+
+  // An owner inviting someone sends the request themselves; otherwise the sender asked to join.
+  const isInvite = (r) => r.project && String(r.project.userId) === String(r.sender?._id);
 
   // Recent activity built from real records
   const activity = useMemo(() => {
@@ -72,7 +80,9 @@ export function Dashboard() {
         at: r.createdAt,
         text: (
           <>
-            <Link className="font-semibold text-foreground hover:underline" to={`/u/${r.sender?.userName}`}>@{r.sender?.userName}</Link> requested to collaborate on <span className="font-medium text-foreground">{r.project?.title}</span>
+            <Link className="font-semibold text-foreground hover:underline" to={`/u/${r.sender?.userName}`}>@{r.sender?.userName}</Link>{" "}
+            {isInvite(r) ? "invited you to join" : "requested to collaborate on"}{" "}
+            <span className="font-medium text-foreground">{r.project?.title}</span>
           </>
         ),
       })),
@@ -80,7 +90,12 @@ export function Dashboard() {
         id: `s${r._id}`,
         at: r.respondedAt || r.createdAt,
         text:
-          r.status === "pending" ? (
+          isInvite(r) ? (
+            <>
+              You invited @{r.receiver?.userName} to <span className="font-medium text-foreground">{r.project?.title}</span>
+              {r.status !== "pending" && ` (${r.status})`}
+            </>
+          ) : r.status === "pending" ? (
             <>
               You asked to collaborate on <span className="font-medium text-foreground">{r.project?.title}</span>
             </>

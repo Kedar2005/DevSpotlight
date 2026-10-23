@@ -1,41 +1,58 @@
-import { useState, useEffect } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
-import {
-  Trophy,
-  Calendar,
-  Clock,
-  MapPin,
-  Tag,
-  Award,
-  CheckCircle,
-  AlertCircle,
-  Layers,
-  Shield,
-  ChevronLeft,
-  Sparkles
-} from "lucide-react";
-import { getHackathonDetails, registerForHackathon } from "../../api/hackathon.api";
+import { useEffect, useState } from "react";
+import { useParams, Link, useLocation } from "react-router-dom";
+import { ChevronLeft, CalendarDays, Users, DoorOpen, Settings2, CheckCircle2 } from "lucide-react";
+import { getHackathonDetails, registerForHackathon, getPublicColleges } from "../../api/hackathon.api";
 import { useAuth } from "../../hooks/useAuth";
+import { getErrorMessage } from "../../lib/errors";
+import { HACKATHON_STATUS, formatDate } from "../../lib/hackathon";
+import { Button } from "../../components/ui/button";
+import { Input } from "../../components/ui/input";
+import { Select } from "../../components/ui/select";
+import { Alert } from "../../components/ui/alert";
+import { Badge } from "../../components/ui/badge";
+import { Modal } from "../../components/ui/modal";
+import { LoadingState, StatusPill } from "../../components/shared/PageState";
+
+function Section({ title, children }) {
+  return (
+    <section className="rounded-lg border border-border bg-card p-5">
+      <h2 className="mb-3 text-sm font-semibold text-foreground">{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+// Explains why registration is closed, using the same rules as the server.
+function closedReason(h) {
+  if (h.status === "completed") return "This hackathon has ended.";
+  if (h.status === "cancelled") return "This hackathon was cancelled.";
+  if (h.registrationStartDate && new Date() < new Date(h.registrationStartDate)) {
+    return `Registration opens ${formatDate(h.registrationStartDate, true)}.`;
+  }
+  if (new Date() > new Date(h.registrationDeadline)) return "The registration deadline has passed.";
+  if (h.maximumParticipants && h.participantCount >= h.maximumParticipants) return "All places are taken.";
+  return "Registration is not open.";
+}
 
 export default function HackathonDetails() {
   const { id } = useParams();
-  const navigate = useNavigate();
-  const { user } = useAuth();
+  const location = useLocation();
+  const { user, isAuthenticated } = useAuth();
 
   const [hackathon, setHackathon] = useState(null);
+  const [colleges, setColleges] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [registering, setRegistering] = useState(false);
-  const [registerSuccess, setRegisterSuccess] = useState(false);
-  const [showRegModal, setShowRegModal] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
 
-  // Form for registration modal
-  const [regData, setRegData] = useState({
-    teamName: "",
-    college: user?.collegeName || "",
-    agreeToRules: true,
-  });
+  const [formOpen, setFormOpen] = useState(false);
+  const [teamName, setTeamName] = useState("");
+  const [collegeId, setCollegeId] = useState("");
+  const [acceptRules, setAcceptRules] = useState(false);
+  const [registering, setRegistering] = useState(false);
+  const [registerError, setRegisterError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [registerSuccess, setRegisterSuccess] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -43,421 +60,329 @@ export default function HackathonDetails() {
       .then((data) => {
         if (!active) return;
         setHackathon(data);
-        setError("");
+        setLoadError("");
       })
       .catch((err) => {
-        if (!active) return;
-        setError(err?.response?.data?.message || "Failed to load hackathon details");
+        if (active) setLoadError(getErrorMessage(err, "Failed to load hackathon."));
       })
       .finally(() => {
-        if (!active) return;
-        setLoading(false);
+        if (active) setLoading(false);
       });
-
     return () => {
       active = false;
     };
   }, [id, reloadKey]);
 
+  useEffect(() => {
+    getPublicColleges()
+      .then((data) => setColleges(data || []))
+      .catch(() => setColleges([]));
+  }, []);
+
+  const openForm = () => {
+    // Prefill the college from the profile: by reference, else by matching the profile college name.
+    const profileCollege =
+      colleges.find((c) => String(c._id) === String(user?.college)) ||
+      colleges.find((c) => c.name.toLowerCase() === (user?.collegeName || "").trim().toLowerCase());
+    setCollegeId(profileCollege?._id || "");
+    setTeamName("");
+    setAcceptRules(false);
+    setRegisterError("");
+    setFieldErrors({});
+    setFormOpen(true);
+  };
+
   const handleRegister = async (e) => {
     e.preventDefault();
-    if (!user) {
-      navigate("/login", { state: { from: `/hackathon/${id}` } });
-      return;
-    }
-
+    const errors = {};
+    if (hackathon.participationMode === "team" && !teamName.trim()) errors.teamName = "Enter your team name.";
+    if (!acceptRules) errors.acceptRules = "Confirm that you meet the eligibility requirements and accept the rules.";
+    setFieldErrors(errors);
+    if (Object.keys(errors).length) return;
+    setRegistering(true);
+    setRegisterError("");
     try {
-      setRegistering(true);
-      setError("");
       await registerForHackathon(hackathon._id, {
-        teamName: regData.teamName || undefined,
-        college: regData.college || undefined,
+        teamName: teamName.trim() || undefined,
+        collegeId: collegeId || undefined,
+        acceptRules: true,
       });
-      setRegisterSuccess(true);
-      setShowRegModal(false);
-      // Trigger reload to fetch updated isRegistered and participant count
-      setReloadKey((prev) => prev + 1);
+      setFormOpen(false);
+      setRegisterSuccess("Registration complete. Your hackathon room is now open.");
+      // Re-read from the server so status, counts and room access reflect the saved record.
+      setReloadKey((k) => k + 1);
     } catch (err) {
-      setError(err?.response?.data?.message || "Registration failed");
+      setRegisterError(getErrorMessage(err, "Registration failed."));
     } finally {
       setRegistering(false);
     }
   };
 
-  if (loading) {
+  if (loading) return <LoadingState label="Loading hackathon…" />;
+
+  if (loadError || !hackathon) {
     return (
-      <div className="min-h-[60vh] flex flex-col items-center justify-center text-slate-400 gap-3">
-        <div className="h-8 w-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-        <span className="text-sm">Loading event details...</span>
+      <div className="mx-auto max-w-3xl space-y-4 px-4 py-12 text-center">
+        <Alert tone="error">{loadError || "Hackathon not found."}</Alert>
+        <Button asChild variant="outline" size="sm">
+          <Link to="/hackathons">
+            <ChevronLeft className="h-4 w-4" aria-hidden="true" /> All hackathons
+          </Link>
+        </Button>
       </div>
     );
   }
 
-  if (error && !hackathon) {
-    return (
-      <div className="max-w-3xl mx-auto px-4 py-16 text-center space-y-4">
-        <AlertCircle className="h-12 w-12 text-rose-500 mx-auto" />
-        <h2 className="text-xl font-bold text-white">Event Not Found</h2>
-        <p className="text-sm text-slate-400">{error}</p>
-        <Link
-          to="/hackathons"
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-500 transition"
-        >
-          <ChevronLeft className="h-4 w-4" /> Back to Hackathons
-        </Link>
-      </div>
-    );
-  }
-
-  const isRegOpen = hackathon.status === "registration_open";
-  const isRegistered = Boolean(hackathon.isRegistered);
-  const roomId = hackathon.room?._id || hackathon.room;
+  const h = hackathon;
+  const isAdmin = user?.role === "admin";
+  const roomId = h.room?._id;
+  const canOpenRoom = roomId && (h.isRegistered || isAdmin || h.room?.visibility === "public");
+  const rules = (h.rules || "").split("\n").map((r) => r.trim()).filter(Boolean);
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-      {/* Top Breadcrumb */}
-      <div className="flex items-center justify-between">
-        <Link
-          to="/hackathons"
-          className="text-xs font-semibold text-slate-400 hover:text-white flex items-center gap-1.5 transition"
-        >
-          <ChevronLeft className="h-4 w-4" /> All Hackathons
+    <div className="mx-auto max-w-6xl space-y-6 px-4 py-8 sm:px-6">
+      <div className="flex items-center justify-between gap-3">
+        <Link to="/hackathons" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+          <ChevronLeft className="h-4 w-4" aria-hidden="true" /> All hackathons
         </Link>
-
-        {user?.role === "admin" && (
-          <Link
-            to="/admin/hackathons"
-            className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-medium"
-          >
-            <Shield className="h-3.5 w-3.5" /> Manage in Admin Panel
+        {isAdmin && (
+          <Link to="/admin/hackathons" className="inline-flex items-center gap-1 text-sm text-primary hover:underline">
+            <Settings2 className="h-4 w-4" aria-hidden="true" /> Manage
           </Link>
         )}
       </div>
 
-      {/* Main Banner Header */}
-      <div className="relative rounded-3xl overflow-hidden border border-white/10 bg-slate-900/80 shadow-2xl">
-        <div className="h-64 sm:h-80 w-full relative bg-slate-950">
-          {hackathon.bannerImage ? (
-            <img
-              src={hackathon.bannerImage}
-              alt={hackathon.title}
-              className="w-full h-full object-cover"
-            />
-          ) : (
-            <div className="w-full h-full bg-gradient-to-tr from-indigo-950 via-slate-900 to-purple-950 flex items-center justify-center">
-              <Trophy className="h-28 w-28 text-indigo-500/20" />
-            </div>
-          )}
-          <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/60 to-transparent" />
+      <header className="space-y-2 border-b border-border pb-5">
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusPill map={HACKATHON_STATUS} status={h.status} />
+          {h.visibility === "private" && <Badge variant="outline">Private</Badge>}
+          {h.theme && <Badge variant="secondary">{h.theme}</Badge>}
+        </div>
+        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{h.title}</h1>
+        <p className="text-sm text-muted-foreground">
+          Organized by {h.organizer}
+          {h.participatingColleges?.length ? ` · ${h.participatingColleges.map((c) => c.name).join(", ")}` : ""}
+        </p>
+      </header>
 
-          {/* Banner Floating Metadata */}
-          <div className="absolute bottom-6 left-6 right-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
-            <div className="space-y-2 max-w-3xl">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-indigo-600/80 backdrop-blur-md text-white border border-indigo-400/30">
-                  {hackathon.status?.replace("_", " ")}
-                </span>
-                <span className="px-3 py-1 rounded-full text-xs font-semibold bg-black/60 backdrop-blur-md text-slate-200">
-                  {hackathon.mode?.toUpperCase()}
-                </span>
-                {hackathon.college && (
-                  <span className="px-3 py-1 rounded-full text-xs font-medium bg-black/60 backdrop-blur-md text-indigo-300 flex items-center gap-1.5">
-                    <MapPin className="h-3.5 w-3.5" />
-                    {hackathon.college?.name || hackathon.college}
-                  </span>
-                )}
-              </div>
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="space-y-6 lg:col-span-2">
+          <Section title="About">
+            <p className="whitespace-pre-line text-sm leading-relaxed text-muted-foreground">{h.description}</p>
+          </Section>
 
-              <h1 className="text-2xl sm:text-4xl font-extrabold text-white tracking-tight">
-                {hackathon.title}
-              </h1>
-            </div>
+          <Section title="Eligibility">
+            <p className="whitespace-pre-line text-sm text-muted-foreground">
+              {h.eligibility || "Open to all registered DevSpotlight students."}
+            </p>
+          </Section>
 
-            {/* Quick Action in Header */}
-            <div className="shrink-0">
-              {isRegistered ? (
-                <div className="flex flex-col items-start md:items-end gap-2">
-                  <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1.5 bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20">
-                    <CheckCircle className="h-4 w-4" /> Registered Participant
-                  </span>
-                  {roomId && (
-                    <Link
-                      to={`/hackathon/room/${roomId}`}
-                      className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-medium text-sm flex items-center gap-2 shadow-lg shadow-indigo-500/25 transition cursor-pointer"
-                    >
-                      <Layers className="h-4 w-4" />
-                      Enter Hackathon Room
-                    </Link>
+          <Section title="Rules">
+            {rules.length ? (
+              <ol className="list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
+                {rules.map((rule, i) => (
+                  <li key={i}>{rule}</li>
+                ))}
+              </ol>
+            ) : (
+              <p className="text-sm text-muted-foreground">The organizers have not published rules yet.</p>
+            )}
+          </Section>
+        </div>
+
+        <aside className="order-first space-y-6 lg:order-none">
+          <Section title="Registration">
+            {registerSuccess && <Alert tone="success" className="mb-3">{registerSuccess}</Alert>}
+
+            {h.isRegistered ? (
+              <div className="space-y-3">
+                <Button className="w-full" disabled>
+                  <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> Registered
+                </Button>
+                <dl className="space-y-1.5 text-sm">
+                  {h.userRegistration?.teamName && (
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-muted-foreground">Team</dt>
+                      <dd className="font-medium">{h.userRegistration.teamName}</dd>
+                    </div>
                   )}
-                </div>
-              ) : isRegOpen ? (
-                <button
-                  onClick={() => setShowRegModal(true)}
-                  className="px-6 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold text-sm flex items-center gap-2 shadow-lg shadow-emerald-500/25 transition cursor-pointer"
-                >
-                  <Sparkles className="h-4 w-4" />
-                  Register Now
-                </button>
-              ) : (
-                <span className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 bg-white/5 border border-white/10">
-                  Registration Closed
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {registerSuccess && (
-        <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 flex items-center justify-between text-sm">
-          <div className="flex items-center gap-2">
-            <CheckCircle className="h-5 w-5" />
-            <span>Registration successful! You now have full access to the private hackathon room.</span>
-          </div>
-          {roomId && (
-            <Link
-              to={`/hackathon/room/${roomId}`}
-              className="text-xs font-bold underline hover:text-white"
-            >
-              Go to Room &rarr;
-            </Link>
-          )}
-        </div>
-      )}
-
-      {/* Grid Content */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Left Column: Description & Prizes */}
-        <div className="lg:col-span-2 space-y-8">
-          {/* Overview */}
-          <div className="p-6 rounded-2xl border border-white/10 bg-slate-900/50 space-y-4">
-            <h2 className="text-lg font-bold text-white flex items-center gap-2">
-              <Trophy className="h-5 w-5 text-indigo-400" />
-              Event Description & Guidelines
-            </h2>
-            <div className="text-sm text-slate-300 leading-relaxed whitespace-pre-line">
-              {hackathon.description || "No specific guidelines provided for this event."}
-            </div>
-
-            {hackathon.location && (
-              <div className="pt-4 border-t border-white/10 text-xs text-slate-400 flex items-center gap-2">
-                <MapPin className="h-4 w-4 text-indigo-400" />
-                <span>Venue / Platform: <strong className="text-white">{hackathon.location}</strong></span>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-muted-foreground">College</dt>
+                    <dd className="text-right font-medium">
+                      {colleges.find((c) => String(c._id) === String(h.userRegistration?.college))?.name ||
+                        user?.collegeName ||
+                        "Not specified"}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-muted-foreground">Registered on</dt>
+                    <dd className="font-medium">{formatDate(h.userRegistration?.registeredAt, true)}</dd>
+                  </div>
+                </dl>
+              </div>
+            ) : isAdmin ? (
+              <Alert tone="info">Administrators manage this hackathon and can open its room, but do not register as participants.</Alert>
+            ) : !h.registrationOpen ? (
+              <Alert tone="info">{closedReason(h)}</Alert>
+            ) : !isAuthenticated ? (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">Sign in with your student account to register.</p>
+                <Button asChild className="w-full">
+                  <Link to="/login" state={{ from: location.pathname }}>
+                    Sign in to register
+                  </Link>
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  Registration closes {formatDate(h.registrationDeadline, true)}.
+                </p>
+                <Button className="w-full" onClick={openForm}>
+                  Register
+                </Button>
               </div>
             )}
-          </div>
 
-          {/* Prizes */}
-          {hackathon.prizes && hackathon.prizes.length > 0 && (
-            <div className="p-6 rounded-2xl border border-white/10 bg-slate-900/50 space-y-4">
-              <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                <Award className="h-5 w-5 text-amber-400" />
-                Prize Pool & Awards
-              </h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {hackathon.prizes.map((p, idx) => (
-                  <div
-                    key={idx}
-                    className="p-4 rounded-xl border border-amber-500/20 bg-amber-500/5 space-y-1"
-                  >
-                    <div className="text-xs text-amber-400 font-semibold">{p.name}</div>
-                    <div className="text-xl font-extrabold text-white">{p.amount}</div>
-                    {p.description && (
-                      <p className="text-xs text-slate-400 pt-1">{p.description}</p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Tags */}
-          {hackathon.tags && hackathon.tags.length > 0 && (
-            <div className="p-6 rounded-2xl border border-white/10 bg-slate-900/50 space-y-3">
-              <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-                <Tag className="h-4 w-4 text-indigo-400" />
-                Domains & Themes
-              </h3>
-              <div className="flex flex-wrap gap-2">
-                {hackathon.tags.map((tag, idx) => (
-                  <span
-                    key={idx}
-                    className="px-3 py-1 rounded-lg text-xs font-medium bg-white/5 border border-white/10 text-slate-300"
-                  >
-                    #{tag}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Right Sidebar: Timeline & Participant Info */}
-        <div className="space-y-6">
-          <div className="p-6 rounded-2xl border border-white/10 bg-slate-900/50 space-y-5">
-            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400">
-              Event Timeline
-            </h3>
-
-            <div className="space-y-4 text-xs">
-              <div className="flex items-start gap-3">
-                <Calendar className="h-4 w-4 text-indigo-400 mt-0.5 shrink-0" />
-                <div>
-                  <div className="text-slate-400">Registration Closes</div>
-                  <div className="text-white font-medium text-sm">
-                    {hackathon.registrationEnd
-                      ? new Date(hackathon.registrationEnd).toLocaleString()
-                      : "Open until start"}
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-3">
-                <Clock className="h-4 w-4 text-emerald-400 mt-0.5 shrink-0" />
-                <div>
-                  <div className="text-slate-400">Hackathon Begins</div>
-                  <div className="text-white font-medium text-sm">
-                    {hackathon.startDate ? new Date(hackathon.startDate).toLocaleString() : "TBD"}
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-3">
-                <Clock className="h-4 w-4 text-rose-400 mt-0.5 shrink-0" />
-                <div>
-                  <div className="text-slate-400">Hackathon Ends / Submission Deadline</div>
-                  <div className="text-white font-medium text-sm">
-                    {hackathon.endDate ? new Date(hackathon.endDate).toLocaleString() : "TBD"}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="pt-4 border-t border-white/10 space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400">Enrolled Students:</span>
-                <span className="font-bold text-white">
-                  {hackathon.registeredCount || 0} / {hackathon.maxParticipants || "Unlimited"}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Room Access Widget */}
-          <div className="p-6 rounded-2xl border border-indigo-500/20 bg-indigo-950/20 space-y-4">
-            <div className="flex items-center gap-2">
-              <Layers className="h-5 w-5 text-indigo-400" />
-              <h3 className="text-sm font-bold text-white">Hackathon Room</h3>
-            </div>
-            <p className="text-xs text-slate-300 leading-relaxed">
-              Every hackathon features a dedicated room for live announcements, submission tracking, and project showcase.
-            </p>
-
-            {isRegistered ? (
-              roomId ? (
-                <Link
-                  to={`/hackathon/room/${roomId}`}
-                  className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs flex items-center justify-center gap-2 transition"
-                >
-                  <span>Go to Room</span>
+            {canOpenRoom && (
+              <Button asChild variant="outline" className="mt-3 w-full">
+                <Link to={`/hackathon/room/${roomId}`}>
+                  <DoorOpen className="h-4 w-4" aria-hidden="true" />
+                  {h.room?.visibility === "public" && !h.isRegistered && !isAdmin ? "View showcase room" : "Open hackathon room"}
                 </Link>
-              ) : null
-            ) : isRegOpen ? (
-              <button
-                onClick={() => setShowRegModal(true)}
-                className="w-full py-2.5 px-4 rounded-xl bg-white/10 hover:bg-white/15 text-white font-medium text-xs flex items-center justify-center gap-2 transition"
-              >
-                <span>Register to Enter Room</span>
-              </button>
-            ) : null}
-          </div>
-        </div>
+              </Button>
+            )}
+          </Section>
+
+          <Section title="Dates">
+            <dl className="space-y-2 text-sm">
+              {[
+                ["Registration opens", h.registrationStartDate ? formatDate(h.registrationStartDate, true) : "Open now"],
+                ["Registration closes", formatDate(h.registrationDeadline, true)],
+                ["Event starts", formatDate(h.startDate, true)],
+                ["Event ends / submissions due", formatDate(h.endDate, true)],
+              ].map(([label, value]) => (
+                <div key={label} className="flex items-start justify-between gap-3">
+                  <dt className="flex items-center gap-1.5 text-muted-foreground">
+                    <CalendarDays className="h-3.5 w-3.5" aria-hidden="true" />
+                    {label}
+                  </dt>
+                  <dd className="text-right font-medium">{value}</dd>
+                </div>
+              ))}
+            </dl>
+          </Section>
+
+          <Section title="Participation">
+            <dl className="space-y-2 text-sm">
+              <div className="flex justify-between gap-3">
+                <dt className="flex items-center gap-1.5 text-muted-foreground">
+                  <Users className="h-3.5 w-3.5" aria-hidden="true" /> Registered
+                </dt>
+                <dd className="font-medium">
+                  {h.participantCount}
+                  {h.maximumParticipants ? ` / ${h.maximumParticipants}` : ""}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-muted-foreground">Format</dt>
+                <dd className="font-medium">
+                  {h.participationMode === "team" ? `Teams of up to ${h.maximumTeamSize}` : "Individual"}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-muted-foreground">Submissions</dt>
+                <dd className="font-medium">{h.submissionCount}</dd>
+              </div>
+            </dl>
+          </Section>
+        </aside>
       </div>
 
-      {/* REGISTRATION MODAL */}
-      {showRegModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="bg-slate-900 border border-white/10 rounded-2xl max-w-md w-full p-6 space-y-5 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                <Sparkles className="h-5 w-5 text-emerald-400" />
-                Register for Hackathon
-              </h3>
-              <button
-                onClick={() => setShowRegModal(false)}
-                className="text-slate-400 hover:text-white text-xl"
-              >
-                &times;
-              </button>
-            </div>
-
-            <form onSubmit={handleRegister} className="space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Team Name (Optional if participating solo)
-                </label>
-                <input
-                  type="text"
-                  value={regData.teamName}
-                  onChange={(e) => setRegData({ ...regData, teamName: e.target.value })}
-                  placeholder="e.g. CodeCraft Innovators"
-                  className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  College / University
-                </label>
-                <input
-                  type="text"
-                  value={regData.college}
-                  onChange={(e) => setRegData({ ...regData, college: e.target.value })}
-                  placeholder="e.g. Pune Institute of Computer Technology"
-                  className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div className="flex items-center gap-2 text-xs text-slate-300 pt-2">
-                <input
-                  type="checkbox"
-                  id="agreeRules"
-                  required
-                  checked={regData.agreeToRules}
-                  onChange={(e) => setRegData({ ...regData, agreeToRules: e.target.checked })}
-                  className="rounded border-white/10 bg-slate-950 text-indigo-600 focus:ring-0"
-                />
-                <label htmlFor="agreeRules">
-                  I agree to abide by the event code of conduct and submission deadlines.
-                </label>
-              </div>
-
-              {error && (
-                <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs">
-                  {error}
-                </div>
-              )}
-
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/10">
-                <button
-                  type="button"
-                  onClick={() => setShowRegModal(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-white"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={registering}
-                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs transition disabled:opacity-50"
-                >
-                  {registering ? "Registering..." : "Confirm Registration"}
-                </button>
-              </div>
-            </form>
+      <Modal
+        open={formOpen}
+        onClose={registering ? () => {} : () => setFormOpen(false)}
+        title={`Register for ${h.title}`}
+        description="Your name and email come from your profile."
+      >
+        <form onSubmit={handleRegister} className="space-y-3" noValidate>
+          {registerError && <Alert tone="error">{registerError}</Alert>}
+          <div className="space-y-1.5">
+            <label htmlFor="reg-name" className="text-xs font-medium">Name</label>
+            <Input id="reg-name" value={user?.fullName || user?.userName || ""} readOnly disabled />
           </div>
-        </div>
-      )}
+          <div className="space-y-1.5">
+            <label htmlFor="reg-email" className="text-xs font-medium">Email</label>
+            <Input id="reg-email" value={user?.email || ""} readOnly disabled />
+            <p className="text-[11px] text-muted-foreground">
+              To change these, update <Link to="/profile" className="text-primary hover:underline">your profile</Link>.
+            </p>
+          </div>
+          {colleges.length > 0 && (
+            <div className="space-y-1.5">
+              <label htmlFor="college" className="text-xs font-medium">College</label>
+              <Select id="college" value={collegeId} onChange={(e) => setCollegeId(e.target.value)}>
+                <option value="">Not listed / use my profile</option>
+                {colleges.map((c) => (
+                  <option key={c._id} value={c._id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
+          {h.participationMode === "team" && (
+            <div className="space-y-1.5">
+              <label htmlFor="team-name" className="text-xs font-medium">Team name *</label>
+              <Input
+                id="team-name"
+                value={teamName}
+                onChange={(e) => {
+                  setTeamName(e.target.value);
+                  setFieldErrors((prev) => ({ ...prev, teamName: undefined }));
+                }}
+                maxLength={60}
+                required
+                aria-required="true"
+                aria-invalid={Boolean(fieldErrors.teamName)}
+                aria-describedby={fieldErrors.teamName ? "team-name-error" : undefined}
+              />
+              {fieldErrors.teamName && (
+                <p id="team-name-error" className="text-xs text-destructive">{fieldErrors.teamName}</p>
+              )}
+              <p className="text-[11px] text-muted-foreground">
+                Teams of up to {h.maximumTeamSize}. Teammates register separately with the same team name.
+              </p>
+            </div>
+          )}
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={acceptRules}
+              onChange={(e) => {
+                setAcceptRules(e.target.checked);
+                setFieldErrors((prev) => ({ ...prev, acceptRules: undefined }));
+              }}
+              required
+              aria-invalid={Boolean(fieldErrors.acceptRules)}
+              aria-describedby={fieldErrors.acceptRules ? "accept-rules-error" : undefined}
+            />
+            <span>I meet the eligibility requirements and accept the rules of this hackathon. *</span>
+          </label>
+          {fieldErrors.acceptRules && (
+            <p id="accept-rules-error" className="-mt-1 text-xs text-destructive">{fieldErrors.acceptRules}</p>
+          )}
+          <div className="flex justify-end gap-2 border-t border-border pt-3">
+            <Button type="button" variant="outline" size="sm" onClick={() => setFormOpen(false)} disabled={registering}>
+              Cancel
+            </Button>
+            <Button type="submit" size="sm" disabled={registering}>
+              {registering ? "Registering…" : "Submit registration"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

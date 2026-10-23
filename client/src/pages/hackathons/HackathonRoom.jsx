@@ -1,358 +1,280 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import {
-  Layers,
-  Lock,
-  Globe,
-  Upload,
-  Trophy,
-  ExternalLink,
-  GitBranch,
-  AlertCircle,
-  RefreshCw,
-  ChevronLeft,
-  Award
-} from "lucide-react";
+import { ChevronLeft, Upload, Users, FolderGit2, Lock, Globe, CalendarDays } from "lucide-react";
 import { getHackathonRoom, getRoomSubmissions } from "../../api/hackathon.api";
 import { useAuth } from "../../hooks/useAuth";
+import { getErrorMessage } from "../../lib/errors";
+import { HACKATHON_STATUS, ROOM_STATUS, SUBMISSION_STATUS, formatDate } from "../../lib/hackathon";
+import { Button } from "../../components/ui/button";
+import { Badge } from "../../components/ui/badge";
+import { Alert } from "../../components/ui/alert";
+import { Avatar } from "../../components/ui/avatar";
+import { LoadingState, EmptyState, StatusPill } from "../../components/shared/PageState";
+
+function SubmissionCard({ submission: s, showStatus }) {
+  const project = s.project;
+  const team = [s.submittedBy, ...(s.teamMembers || [])].filter(Boolean);
+  return (
+    <article className="space-y-2 rounded-lg border border-border bg-card p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <h3 className="font-medium">{project?.title || "Project unavailable"}</h3>
+        {showStatus && <StatusPill map={SUBMISSION_STATUS} status={s.status} />}
+      </div>
+      {project?.description && <p className="line-clamp-3 text-sm text-muted-foreground">{project.description}</p>}
+      {project?.techStack?.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {project.techStack.map((t) => (
+            <Badge key={t} variant="tech">
+              {t}
+            </Badge>
+          ))}
+        </div>
+      )}
+      <p className="text-xs text-muted-foreground">
+        {team.map((m) => m.fullName || m.userName).join(", ")} · submitted {formatDate(s.submittedAt, true)}
+      </p>
+      {s.notes && <p className="text-xs italic text-muted-foreground">Notes: {s.notes}</p>}
+      <div className="flex flex-wrap gap-3 text-xs">
+        {project?._id && (
+          <Link to={`/project/${project._id}`} className="text-primary hover:underline">
+            Project page
+          </Link>
+        )}
+        {project?.githubLink && (
+          <a href={project.githubLink} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+            Repository
+          </a>
+        )}
+        {project?.liveLink && (
+          <a href={project.liveLink} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+            Live demo
+          </a>
+        )}
+      </div>
+    </article>
+  );
+}
 
 export default function HackathonRoom() {
   const { roomId } = useParams();
   const { user } = useAuth();
-
   const [room, setRoom] = useState(null);
   const [submissions, setSubmissions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [isAccessDenied, setIsAccessDenied] = useState(false);
-  const [activeTab, setActiveTab] = useState("submissions");
-  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let active = true;
-
     Promise.all([getHackathonRoom(roomId), getRoomSubmissions(roomId)])
-      .then(([roomData, subsData]) => {
+      .then(([roomData, submissionData]) => {
         if (!active) return;
         setRoom(roomData);
-        setSubmissions(subsData || []);
+        setSubmissions(submissionData || []);
         setError("");
-        setIsAccessDenied(false);
       })
       .catch((err) => {
-        if (!active) return;
-        if (err?.response?.status === 403) {
-          setIsAccessDenied(true);
-        } else {
-          setError(err?.response?.data?.message || "Failed to load hackathon room");
-        }
+        if (active) setError(getErrorMessage(err, "Failed to load the hackathon room."));
       })
       .finally(() => {
-        if (!active) return;
-        setLoading(false);
+        if (active) setLoading(false);
       });
-
     return () => {
       active = false;
     };
-  }, [roomId, reloadKey]);
+  }, [roomId]);
 
-  const handleRefresh = () => {
-    setLoading(true);
-    setReloadKey((prev) => prev + 1);
-  };
+  // Registrations grouped by team name; individual entrants form their own group.
+  const teams = useMemo(() => {
+    const groups = new Map();
+    (room?.participants || []).forEach((p) => {
+      const key = p.teamName?.trim() || `solo-${p._id}`;
+      if (!groups.has(key)) groups.set(key, { name: p.teamName?.trim() || "", members: [] });
+      groups.get(key).members.push(p);
+    });
+    return [...groups.values()];
+  }, [room]);
 
-  if (loading) {
-    return (
-      <div className="min-h-[60vh] flex flex-col items-center justify-center text-slate-400 gap-3">
-        <RefreshCw className="h-8 w-8 animate-spin text-indigo-400" />
-        <span className="text-sm font-medium">Entering hackathon room...</span>
-      </div>
-    );
-  }
-
-  // Access Denied / 403 Forbidden Screen
-  if (isAccessDenied) {
-    return (
-      <div className="max-w-2xl mx-auto px-4 py-20 text-center space-y-6">
-        <div className="h-20 w-20 rounded-3xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center mx-auto">
-          <Lock className="h-10 w-10" />
-        </div>
-
-        <div className="space-y-2">
-          <h2 className="text-2xl font-bold text-white">Private Hackathon Room</h2>
-          <p className="text-sm text-slate-400 max-w-md mx-auto leading-relaxed">
-            This collaboration room is restricted to registered hackathon participants and administrators. You must register for this hackathon to access this space.
-          </p>
-        </div>
-
-        <div className="flex items-center justify-center gap-4 pt-2">
-          <Link
-            to="/hackathons"
-            className="px-5 py-2.5 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-white text-xs font-semibold transition"
-          >
-            Browse Hackathons
-          </Link>
-        </div>
-      </div>
-    );
-  }
+  if (loading) return <LoadingState label="Loading room…" />;
 
   if (error || !room) {
     return (
-      <div className="max-w-3xl mx-auto px-4 py-16 text-center space-y-4">
-        <AlertCircle className="h-12 w-12 text-rose-500 mx-auto" />
-        <h2 className="text-xl font-bold text-white">Room Unavailable</h2>
-        <p className="text-sm text-slate-400">{error || "Hackathon room could not be loaded."}</p>
-        <Link
-          to="/hackathons"
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-500 transition"
-        >
-          <ChevronLeft className="h-4 w-4" /> Back to Hackathons
-        </Link>
+      <div className="mx-auto max-w-3xl space-y-4 px-4 py-12 text-center">
+        <Alert tone="error">{error || "Room not found."}</Alert>
+        <Button asChild variant="outline" size="sm">
+          <Link to="/hackathons">
+            <ChevronLeft className="h-4 w-4" aria-hidden="true" /> All hackathons
+          </Link>
+        </Button>
       </div>
     );
   }
 
-  const hackathon = room.hackathon;
-  const isPublic = room.visibility === "public";
-  const canSubmit = room.status === "open" && hackathon?.status !== "completed";
+  const h = room.hackathon;
+  const isPublicView = room.access === "public";
+  const userId = String(user?._id || "");
+  const mySubmissions = submissions.filter(
+    (s) => String(s.submittedBy?._id) === userId || (s.teamMembers || []).some((m) => String(m._id) === userId)
+  );
+  const submissionsOpen =
+    room.access === "participant" &&
+    room.status !== "archived" &&
+    !["completed", "cancelled", "draft"].includes(h.status) &&
+    new Date() <= new Date(h.endDate);
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-      {/* Top Header Bar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-6">
+    <div className="mx-auto max-w-6xl space-y-6 px-4 py-8 sm:px-6">
+      <Link
+        to={`/hackathon/${h.slug || h._id}`}
+        className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+      >
+        <ChevronLeft className="h-4 w-4" aria-hidden="true" /> Hackathon details
+      </Link>
+
+      <header className="flex flex-col gap-4 border-b border-border pb-5 md:flex-row md:items-end md:justify-between">
         <div className="space-y-2">
-          <div className="flex items-center gap-2 flex-wrap">
-            <Link
-              to={`/hackathon/${hackathon?._id || ""}`}
-              className="text-xs font-semibold text-slate-400 hover:text-white flex items-center gap-1 transition"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" /> Event Info
-            </Link>
-
-            <span className="text-slate-600">•</span>
-
-            {isPublic ? (
-              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center gap-1">
-                <Globe className="h-3 w-3" /> Public Showcase
-              </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusPill map={HACKATHON_STATUS} status={h.status} />
+            <StatusPill map={ROOM_STATUS} status={room.status} />
+            {room.visibility === "public" ? (
+              <Badge variant="success" className="gap-1">
+                <Globe className="h-3 w-3" aria-hidden="true" /> Published
+              </Badge>
             ) : (
-              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center gap-1">
-                <Lock className="h-3 w-3" /> Private Participant Room
-              </span>
+              <Badge variant="outline" className="gap-1">
+                <Lock className="h-3 w-3" aria-hidden="true" /> Private room
+              </Badge>
             )}
-
-            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-white/5 border border-white/10 text-slate-300 capitalize">
-              Status: {room.status}
-            </span>
           </div>
-
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-white flex items-center gap-3">
-            <Layers className="h-7 w-7 text-indigo-400" />
-            {hackathon?.title || "Hackathon Collaboration Room"}
-          </h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{room.title}</h1>
+          <p className="text-sm text-muted-foreground">
+            {h.organizer} · {formatDate(h.startDate)} – {formatDate(h.endDate)}
+          </p>
         </div>
-
-        {/* Action Button: Submit Project & Refresh */}
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handleRefresh}
-            className="p-2.5 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-slate-300 transition"
-            title="Refresh"
-          >
-            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-          </button>
-
-          {canSubmit && (
-            <Link
-              to={`/hackathon/room/${roomId}/submit`}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-medium text-xs shadow-lg shadow-indigo-500/20 transition cursor-pointer"
-            >
-              <Upload className="h-4 w-4" />
-              Submit Your Project
+        {submissionsOpen && (
+          <Button asChild>
+            <Link to={`/hackathon/room/${room._id}/submit`}>
+              <Upload className="h-4 w-4" aria-hidden="true" /> Submit project
             </Link>
-          )}
+          </Button>
+        )}
+      </header>
 
-          {user?.role === "admin" && (
-            <Link
-              to="/admin/rooms"
-              className="px-3.5 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-medium transition"
-            >
-              Room Admin
-            </Link>
-          )}
-        </div>
-      </div>
+      {isPublicView && (
+        <Alert tone="info">This is the published showcase view. Only accepted submissions are shown.</Alert>
+      )}
 
-      {/* Tabs */}
-      <div className="flex items-center gap-2 border-b border-white/10 pb-2">
-        <button
-          onClick={() => setActiveTab("submissions")}
-          className={`px-4 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
-            activeTab === "submissions"
-              ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
-              : "text-slate-400 hover:text-white hover:bg-white/5"
-          }`}
-        >
-          Project Submissions ({submissions.length})
-        </button>
-
-        <button
-          onClick={() => setActiveTab("briefing")}
-          className={`px-4 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
-            activeTab === "briefing"
-              ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
-              : "text-slate-400 hover:text-white hover:bg-white/5"
-          }`}
-        >
-          Guidelines & Rules
-        </button>
-      </div>
-
-      {/* Tab 1: Submissions Gallery */}
-      {activeTab === "submissions" && (
-        <div className="space-y-6">
-          {submissions.length === 0 ? (
-            <div className="p-16 text-center rounded-3xl border border-white/5 bg-slate-900/30 space-y-4">
-              <Trophy className="h-12 w-12 text-slate-600 mx-auto" />
-              <div className="space-y-1">
-                <h3 className="text-lg font-bold text-white">No submissions yet</h3>
-                <p className="text-xs text-slate-400 max-w-md mx-auto">
-                  Be the first team to submit your hackathon project before the deadline.
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="space-y-6 lg:col-span-2">
+          {room.access === "participant" && (
+            <section className="rounded-lg border border-border bg-card p-5" aria-labelledby="my-submission">
+              <h2 id="my-submission" className="mb-3 text-sm font-semibold">Your submission</h2>
+              {mySubmissions.length ? (
+                <ul className="space-y-2">
+                  {mySubmissions.map((s) => (
+                    <li key={s._id} className="flex items-center justify-between gap-2 text-sm">
+                      <span>{s.project?.title || "Project"}</span>
+                      <StatusPill map={SUBMISSION_STATUS} status={s.status} />
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  {submissionsOpen
+                    ? `No project submitted yet. Submissions close ${formatDate(h.endDate, true)}.`
+                    : "You did not submit a project."}
                 </p>
-              </div>
-              {canSubmit && (
-                <Link
-                  to={`/hackathon/room/${roomId}/submit`}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition"
-                >
-                  <Upload className="h-3.5 w-3.5" /> Submit Project Now
-                </Link>
               )}
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {submissions.map((sub) => {
-                const proj = sub.project || {};
-                return (
-                  <div
-                    key={sub._id}
-                    className="p-5 rounded-2xl border border-white/10 bg-slate-900/60 hover:border-indigo-500/40 transition flex flex-col justify-between space-y-4 shadow-lg"
-                  >
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
-                          {sub.status || "Submitted"}
-                        </span>
-                        <span className="text-[10px] text-slate-500">
-                          {new Date(sub.createdAt).toLocaleDateString()}
-                        </span>
-                      </div>
-
-                      <h3 className="text-base font-bold text-white hover:text-indigo-400 transition">
-                        {proj.title || "Untitled Project"}
-                      </h3>
-
-                      <p className="text-xs text-slate-400 line-clamp-3 leading-relaxed">
-                        {proj.description || "Hackathon project submission."}
-                      </p>
-
-                      {/* Required skills / tags */}
-                      {proj.requiredSkills && proj.requiredSkills.length > 0 && (
-                        <div className="flex flex-wrap gap-1 pt-1">
-                          {proj.requiredSkills.slice(0, 3).map((sk, idx) => (
-                            <span
-                              key={idx}
-                              className="px-2 py-0.5 rounded text-[10px] bg-white/5 text-slate-300"
-                            >
-                              {sk}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Team & Links */}
-                    <div className="space-y-3 pt-3 border-t border-white/5">
-                      <div className="text-xs text-slate-400 flex items-center justify-between">
-                        <span>Submitted by:</span>
-                        <span className="font-semibold text-white">
-                          {sub.submittedBy?.fullName || sub.submittedBy?.userName || "Participant"}
-                        </span>
-                      </div>
-
-                      {/* External links */}
-                      <div className="flex items-center gap-2 pt-1 flex-wrap">
-                        {proj._id && (
-                          <Link
-                            to={`/projects/${proj._id}`}
-                            target="_blank"
-                            className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1.5 transition"
-                          >
-                            <ExternalLink className="h-3 w-3" />
-                            View Project
-                          </Link>
-                        )}
-                        {proj.githubUrl && (
-                          <a
-                            href={proj.githubUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="p-1.5 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition"
-                            title="GitHub Repo"
-                          >
-                            <GitBranch className="h-3.5 w-3.5" />
-                          </a>
-                        )}
-                        {sub.presentationUrl && (
-                          <a
-                            href={sub.presentationUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="px-2.5 py-1.5 rounded-lg border border-purple-500/20 bg-purple-500/10 text-purple-300 text-xs hover:bg-purple-500/20 transition flex items-center gap-1"
-                          >
-                            <span>Slide Deck</span>
-                            <ExternalLink className="h-3 w-3" />
-                          </a>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            </section>
           )}
-        </div>
-      )}
 
-      {/* Tab 2: Guidelines & Rules */}
-      {activeTab === "briefing" && (
-        <div className="max-w-3xl space-y-6">
-          <div className="p-6 rounded-2xl border border-white/10 bg-slate-900/50 space-y-4">
-            <h3 className="text-base font-bold text-white flex items-center gap-2">
-              <Trophy className="h-5 w-5 text-indigo-400" />
-              Event Description & Requirements
-            </h3>
-            <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-line">
-              {hackathon?.description || "No specific details provided."}
-            </p>
-          </div>
-
-          <div className="p-6 rounded-2xl border border-white/10 bg-slate-900/50 space-y-4">
-            <h3 className="text-base font-bold text-white flex items-center gap-2">
-              <Award className="h-5 w-5 text-amber-400" />
-              Judging & Submission Criteria
-            </h3>
-            <ul className="space-y-2 text-xs text-slate-300 list-disc list-inside leading-relaxed">
-              <li>Originality & Innovation: The solution demonstrates unique problem-solving.</li>
-              <li>Technical Execution: Code quality, architecture, and technology stack appropriateness.</li>
-              <li>Completeness: Working prototype or demo presentation.</li>
-              <li>Impact & Practicality: Potential real-world collegiate or community application.</li>
-            </ul>
-          </div>
+          <section aria-labelledby="submissions-heading" className="space-y-3">
+            <h2 id="submissions-heading" className="flex items-center gap-2 text-sm font-semibold">
+              <FolderGit2 className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+              {isPublicView ? "Projects" : "Submissions"} ({submissions.length})
+            </h2>
+            {submissions.length === 0 ? (
+              <div className="rounded-lg border border-border bg-card">
+                <EmptyState icon={FolderGit2} title="No projects yet" />
+              </div>
+            ) : (
+              <div className="grid gap-3 md:grid-cols-2">
+                {submissions.map((s) => (
+                  <SubmissionCard key={s._id} submission={s} showStatus={!isPublicView} />
+                ))}
+              </div>
+            )}
+          </section>
         </div>
-      )}
+
+        <aside className="space-y-6">
+          <section className="rounded-lg border border-border bg-card p-5" aria-labelledby="deadlines">
+            <h2 id="deadlines" className="mb-3 text-sm font-semibold">Deadlines</h2>
+            <dl className="space-y-2 text-sm">
+              {[
+                ["Registration closes", h.registrationDeadline],
+                ["Event starts", h.startDate],
+                ["Submissions due", h.endDate],
+              ].map(([label, value]) => (
+                <div key={label} className="flex justify-between gap-3">
+                  <dt className="flex items-center gap-1.5 text-muted-foreground">
+                    <CalendarDays className="h-3.5 w-3.5" aria-hidden="true" />
+                    {label}
+                  </dt>
+                  <dd className="text-right font-medium">{formatDate(value, true)}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+
+          {!isPublicView && (
+            <section className="rounded-lg border border-border bg-card p-5" aria-labelledby="teams">
+              <h2 id="teams" className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                <Users className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                Participants ({room.participants?.length || 0})
+              </h2>
+              {teams.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No one has registered yet.</p>
+              ) : (
+                <ul className="space-y-3">
+                  {teams.map((team, i) => (
+                    <li key={team.name || i}>
+                      {team.name && <p className="mb-1 text-xs font-semibold text-muted-foreground">Team {team.name}</p>}
+                      <ul className="space-y-1.5">
+                        {team.members.map((m) => (
+                          <li key={m._id} className="flex items-center gap-2 text-sm">
+                            <Avatar user={m.user} size="xs" />
+                            {m.user?.userName ? (
+                              <Link to={`/u/${m.user.userName}`} className="truncate hover:text-primary">
+                                {m.user.fullName || m.user.userName}
+                              </Link>
+                            ) : (
+                              <span className="text-muted-foreground">Deleted user</span>
+                            )}
+                            <span className="ml-auto truncate text-xs text-muted-foreground">
+                              {m.college?.code || m.user?.collegeName || ""}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
+
+          {room.participatingColleges?.length > 0 && (
+            <section className="rounded-lg border border-border bg-card p-5" aria-labelledby="colleges">
+              <h2 id="colleges" className="mb-2 text-sm font-semibold">Participating colleges</h2>
+              <ul className="space-y-1 text-sm text-muted-foreground">
+                {room.participatingColleges.map((c) => (
+                  <li key={c._id}>{c.name}</li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </aside>
+      </div>
     </div>
   );
 }

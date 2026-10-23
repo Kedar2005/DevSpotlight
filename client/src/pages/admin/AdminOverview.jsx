@@ -5,15 +5,53 @@ import {
   FolderGit2,
   GraduationCap,
   Trophy,
-  DoorOpen,
-  ShieldCheck,
+  Activity,
+  ClipboardCheck,
   RotateCw,
+  Plus,
+  DoorOpen,
 } from "lucide-react";
 import { getAdminStats } from "../../api/admin.api";
 import { getErrorMessage } from "../../lib/errors";
-import { Card, CardContent } from "../../components/ui/card";
+import { formatDate } from "../../lib/hackathon";
 import { Button } from "../../components/ui/button";
 import { Alert } from "../../components/ui/alert";
+import { Badge } from "../../components/ui/badge";
+import { PageHeader, LoadingState, EmptyState } from "../../components/shared/PageState";
+
+const SUMMARY_CARDS = [
+  { key: "totalStudents", label: "Total Students", icon: Users, href: "/admin/students" },
+  { key: "totalProjects", label: "Total Projects", icon: FolderGit2, href: "/admin/projects" },
+  { key: "totalColleges", label: "Total Colleges", icon: GraduationCap, href: "/admin/colleges" },
+  { key: "totalHackathons", label: "Total Hackathons", icon: Trophy, href: "/admin/hackathons" },
+  { key: "activeHackathons", label: "Active Hackathons", icon: Activity, href: "/admin/hackathons" },
+  { key: "pendingSubmissions", label: "Pending Reviews", icon: ClipboardCheck, href: "/admin/submissions" },
+];
+
+const QUICK_ACTIONS = [
+  { label: "Create Hackathon", href: "/admin/hackathons?create=1", icon: Plus },
+  { label: "Manage Students", href: "/admin/students", icon: Users },
+  { label: "Manage Projects", href: "/admin/projects", icon: FolderGit2 },
+  { label: "Manage Colleges", href: "/admin/colleges", icon: GraduationCap },
+  { label: "Manage Hackathon Rooms", href: "/admin/rooms", icon: DoorOpen },
+  { label: "Review Submissions", href: "/admin/submissions", icon: ClipboardCheck },
+];
+
+const ACTIVITY_LABEL = {
+  student: "New student",
+  project: "New project",
+  hackathon: "Hackathon",
+  submission: "Submission",
+};
+
+const STATUS_VARIANT = {
+  active: "success",
+  suspended: "danger",
+  moderated: "danger",
+  submitted: "warning",
+  accepted: "success",
+  rejected: "danger",
+};
 
 export function AdminOverview() {
   const [stats, setStats] = useState(null);
@@ -23,7 +61,6 @@ export function AdminOverview() {
 
   useEffect(() => {
     let active = true;
-
     getAdminStats()
       .then((data) => {
         if (!active) return;
@@ -31,210 +68,119 @@ export function AdminOverview() {
         setError("");
       })
       .catch((err) => {
-        if (!active) return;
-        setError(getErrorMessage(err, "Failed to load admin statistics."));
+        if (active) setError(getErrorMessage(err, "Failed to load dashboard data."));
       })
       .finally(() => {
-        if (!active) return;
-        setLoading(false);
+        if (active) setLoading(false);
       });
-
     return () => {
       active = false;
     };
   }, [reloadKey]);
 
-  const fetchStats = () => {
+  const refresh = () => {
     setLoading(true);
-    setReloadKey((prev) => prev + 1);
+    setReloadKey((k) => k + 1);
   };
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col gap-2 border-b border-border pb-5 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">
-            Platform Overview
-          </h1>
-          <p className="mt-1 text-xs sm:text-sm text-muted-foreground">
-            Real-time platform metrics, user activity, moderation, and hackathon operations.
-          </p>
-        </div>
-
-        <Button variant="outline" size="sm" onClick={fetchStats} disabled={loading}>
-          <RotateCw className={`mr-1.5 h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-          Refresh Stats
-        </Button>
-      </div>
+    <div className="space-y-8">
+      <PageHeader
+        title="Overview"
+        description="Current platform totals and the latest activity."
+        actions={
+          <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
+            <RotateCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} aria-hidden="true" />
+            Refresh
+          </Button>
+        }
+      />
 
       {error && <Alert tone="error">{error}</Alert>}
 
-      {/* Real Statistics Metric Cards Grid */}
-      {loading ? (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          {[...Array(8)].map((_, i) => (
-            <div key={i} className="h-24 animate-pulse rounded-lg border border-border bg-card" />
+      <section aria-label="Summary">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+          {SUMMARY_CARDS.map((card) => (
+            <Link
+              key={card.key}
+              to={card.href}
+              className="rounded-lg border border-border bg-card p-4 transition-colors hover:border-primary/40"
+            >
+              <div className="flex items-center justify-between text-muted-foreground">
+                <span className="text-xs font-medium">{card.label}</span>
+                <card.icon className="h-4 w-4" aria-hidden="true" />
+              </div>
+              <p className="mt-2 text-2xl font-semibold tabular-nums text-foreground">
+                {loading && !stats ? "…" : stats?.[card.key] ?? "—"}
+              </p>
+            </Link>
           ))}
         </div>
-      ) : stats ? (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <Card className="border-border bg-card">
-            <CardContent className="p-4 space-y-1">
-              <div className="flex items-center justify-between text-muted-foreground">
-                <span className="text-xs font-semibold uppercase tracking-wider">Total Users</span>
-                <Users className="h-4 w-4 text-primary" />
-              </div>
-              <p className="text-2xl font-bold text-foreground font-code">{stats.totalUsers}</p>
-              <p className="text-[11px] text-muted-foreground">{stats.totalStudents} student developers</p>
-            </CardContent>
-          </Card>
+      </section>
 
-          <Card className="border-border bg-card">
-            <CardContent className="p-4 space-y-1">
-              <div className="flex items-center justify-between text-muted-foreground">
-                <span className="text-xs font-semibold uppercase tracking-wider">Active Projects</span>
-                <FolderGit2 className="h-4 w-4 text-emerald-500" />
-              </div>
-              <p className="text-2xl font-bold text-foreground font-code">{stats.totalProjects}</p>
-              <p className="text-[11px] text-muted-foreground">Excludes moderated/deleted</p>
-            </CardContent>
-          </Card>
-
-          <Card className="border-border bg-card">
-            <CardContent className="p-4 space-y-1">
-              <div className="flex items-center justify-between text-muted-foreground">
-                <span className="text-xs font-semibold uppercase tracking-wider">Active Colleges</span>
-                <GraduationCap className="h-4 w-4 text-blue-500" />
-              </div>
-              <p className="text-2xl font-bold text-foreground font-code">{stats.totalColleges}</p>
-              <p className="text-[11px] text-muted-foreground">Affiliated institutions</p>
-            </CardContent>
-          </Card>
-
-          <Card className="border-border bg-card">
-            <CardContent className="p-4 space-y-1">
-              <div className="flex items-center justify-between text-muted-foreground">
-                <span className="text-xs font-semibold uppercase tracking-wider">Total Hackathons</span>
-                <Trophy className="h-4 w-4 text-amber-500" />
-              </div>
-              <p className="text-2xl font-bold text-foreground font-code">{stats.totalHackathons}</p>
-              <p className="text-[11px] text-emerald-500 font-medium">{stats.activeHackathons} active/open</p>
-            </CardContent>
-          </Card>
-
-          <Card className="border-border bg-card">
-            <CardContent className="p-4 space-y-1">
-              <div className="flex items-center justify-between text-muted-foreground">
-                <span className="text-xs font-semibold uppercase tracking-wider">Active Hackathons</span>
-                <Trophy className="h-4 w-4 text-emerald-500" />
-              </div>
-              <p className="text-2xl font-bold text-foreground font-code">{stats.activeHackathons}</p>
-              <p className="text-[11px] text-muted-foreground">Registration or ongoing</p>
-            </CardContent>
-          </Card>
-
-          <Card className="border-border bg-card">
-            <CardContent className="p-4 space-y-1">
-              <div className="flex items-center justify-between text-muted-foreground">
-                <span className="text-xs font-semibold uppercase tracking-wider">Private Rooms</span>
-                <DoorOpen className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <p className="text-2xl font-bold text-foreground font-code">{stats.privateRooms}</p>
-              <p className="text-[11px] text-muted-foreground">Restricted to participants</p>
-            </CardContent>
-          </Card>
-
-          <Card className="border-border bg-card">
-            <CardContent className="p-4 space-y-1">
-              <div className="flex items-center justify-between text-muted-foreground">
-                <span className="text-xs font-semibold uppercase tracking-wider">Public Showcase</span>
-                <DoorOpen className="h-4 w-4 text-emerald-500" />
-              </div>
-              <p className="text-2xl font-bold text-foreground font-code">{stats.publicRooms}</p>
-              <p className="text-[11px] text-emerald-500 font-medium">Published hackathon rooms</p>
-            </CardContent>
-          </Card>
-
-          <Card className="border-border bg-card">
-            <CardContent className="p-4 space-y-1">
-              <div className="flex items-center justify-between text-muted-foreground">
-                <span className="text-xs font-semibold uppercase tracking-wider">Platform Security</span>
-                <ShieldCheck className="h-4 w-4 text-primary" />
-              </div>
-              <p className="text-lg font-bold text-foreground">Role Guarded</p>
-              <p className="text-[11px] text-muted-foreground">Admin JWT authorization active</p>
-            </CardContent>
-          </Card>
-        </div>
-      ) : null}
-
-      {/* Quick Administration Actions */}
-      <div className="space-y-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-          Quick Actions
-        </h2>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Link
-            to="/admin/hackathons"
-            className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:border-primary/50 transition-colors group"
-          >
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500/10 text-amber-500">
-              <Trophy className="h-5 w-5" />
+      <div className="grid gap-6 lg:grid-cols-3">
+        <section className="rounded-lg border border-border bg-card lg:col-span-2" aria-labelledby="recent-activity">
+          <div className="border-b border-border px-4 py-3">
+            <h2 id="recent-activity" className="text-sm font-semibold">Recent activity</h2>
+          </div>
+          {loading && !stats ? (
+            <LoadingState label="Loading activity…" />
+          ) : !stats?.recentActivity?.length ? (
+            <EmptyState title="No activity yet" description="New students, projects, hackathons and submissions will appear here." />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-border bg-muted/40 text-xs text-muted-foreground">
+                  <tr>
+                    <th className="px-4 py-2 font-medium">Type</th>
+                    <th className="px-4 py-2 font-medium">Item</th>
+                    <th className="px-4 py-2 font-medium">Status</th>
+                    <th className="px-4 py-2 font-medium">Date</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {stats.recentActivity.map((item, index) => (
+                    <tr key={`${item.type}-${index}`}>
+                      <td className="whitespace-nowrap px-4 py-2.5 text-xs text-muted-foreground">
+                        {ACTIVITY_LABEL[item.type] || item.type}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <Link to={item.link} className="font-medium text-foreground hover:text-primary">
+                          {item.title}
+                        </Link>
+                        <p className="text-xs text-muted-foreground">{item.detail}</p>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <Badge variant={STATUS_VARIANT[item.status] || "outline"} className="capitalize">
+                          {item.status?.replace("_", " ")}
+                        </Badge>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-2.5 text-xs text-muted-foreground">
+                        {formatDate(item.date)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-            <div>
-              <p className="text-sm font-semibold text-foreground group-hover:text-primary transition-colors">
-                Manage Hackathons
-              </p>
-              <p className="text-xs text-muted-foreground">Create or schedule hackathons</p>
-            </div>
-          </Link>
+          )}
+        </section>
 
-          <Link
-            to="/admin/rooms"
-            className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:border-primary/50 transition-colors group"
-          >
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/10 text-blue-500">
-              <DoorOpen className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-foreground group-hover:text-primary transition-colors">
-                Publish Rooms
-              </p>
-              <p className="text-xs text-muted-foreground">Post-hackathon showcase</p>
-            </div>
-          </Link>
-
-          <Link
-            to="/admin/users"
-            className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:border-primary/50 transition-colors group"
-          >
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <Users className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-foreground group-hover:text-primary transition-colors">
-                User Management
-              </p>
-              <p className="text-xs text-muted-foreground">Search, inspect, and suspend</p>
-            </div>
-          </Link>
-
-          <Link
-            to="/admin/projects"
-            className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:border-primary/50 transition-colors group"
-          >
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-500">
-              <FolderGit2 className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-foreground group-hover:text-primary transition-colors">
-                Moderate Projects
-              </p>
-              <p className="text-xs text-muted-foreground">Remove spam or abusive posts</p>
-            </div>
-          </Link>
-        </div>
+        <section className="rounded-lg border border-border bg-card" aria-labelledby="quick-actions">
+          <div className="border-b border-border px-4 py-3">
+            <h2 id="quick-actions" className="text-sm font-semibold">Quick actions</h2>
+          </div>
+          <div className="grid gap-2 p-3">
+            {QUICK_ACTIONS.map((action) => (
+              <Button key={action.label} asChild variant="outline" className="justify-start">
+                <Link to={action.href}>
+                  <action.icon className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                  {action.label}
+                </Link>
+              </Button>
+            ))}
+          </div>
+        </section>
       </div>
     </div>
   );

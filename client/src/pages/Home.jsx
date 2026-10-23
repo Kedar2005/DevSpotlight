@@ -1,10 +1,7 @@
-import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Terminal, Sparkles, ArrowRight, GitPullRequest, Code2, Layers } from "lucide-react";
+import { Terminal, ArrowRight, GitPullRequest, Code2, Layers } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { useAuth } from "../hooks/useAuth";
-import { getProjects } from "../api/project.api";
-import { ProjectCard } from "../components/shared/ProjectCard";
 
 const steps = [
   {
@@ -28,26 +25,7 @@ const steps = [
 ];
 
 export function Home() {
-  const { isAuthenticated } = useAuth();
-  const [featured, setFeatured] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let active = true;
-    getProjects({ limit: 4 })
-      .then((res) => {
-        if (active && res?.projects) {
-          setFeatured(res.projects);
-        }
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
+  const { isAuthenticated, user } = useAuth();
 
   return (
     <div className="flex flex-col">
@@ -68,78 +46,32 @@ export function Home() {
           </p>
 
           <div className="mt-8 flex flex-wrap items-center gap-3">
-            <Button asChild size="lg">
-              <Link to="/feed">
-                Explore projects <ArrowRight className="h-4 w-4" />
-              </Link>
-            </Button>
             {isAuthenticated ? (
-              <Button asChild variant="outline" size="lg">
-                <Link to="/dashboard">Go to dashboard</Link>
-              </Button>
+              <>
+                <Button asChild size="lg">
+                  <Link to={user?.role === "admin" ? "/admin" : "/dashboard"}>
+                    Go to dashboard <ArrowRight className="h-4 w-4" />
+                  </Link>
+                </Button>
+                <Button asChild variant="outline" size="lg">
+                  <Link to="/feed">Explore projects</Link>
+                </Button>
+              </>
             ) : (
-              <Button asChild variant="outline" size="lg">
-                <Link to="/register">Create profile</Link>
-              </Button>
+              <>
+                <Button asChild size="lg">
+                  <Link to="/register">
+                    Create account <ArrowRight className="h-4 w-4" />
+                  </Link>
+                </Button>
+                <Button asChild variant="outline" size="lg">
+                  <Link to="/login">Log in</Link>
+                </Button>
+              </>
             )}
           </div>
 
-          {/* Quick tech tags */}
-          <div className="mt-10 flex flex-wrap items-center gap-2 border-t border-border pt-6 text-xs text-muted-foreground">
-            <span className="font-medium text-foreground">Popular stacks:</span>
-            {["React", "Node.js", "Python", "MongoDB", "TypeScript", "TailwindCSS", "Next.js"].map((tech) => (
-              <Link
-                key={tech}
-                to={`/feed`}
-                className="rounded border border-border bg-background px-2 py-0.5 font-code hover:border-foreground/30 hover:text-foreground"
-              >
-                {tech}
-              </Link>
-            ))}
-          </div>
         </div>
-      </section>
-
-      {/* Featured Projects Section */}
-      <section className="mx-auto w-full max-w-5xl px-4 py-14">
-        <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-primary">
-              <Sparkles className="h-3.5 w-3.5" />
-              <span>Recent Submissions</span>
-            </div>
-            <h2 className="mt-1 text-2xl font-bold text-foreground">Featured student builds</h2>
-          </div>
-          <Button asChild variant="ghost" size="sm">
-            <Link to="/feed">View all projects &rarr;</Link>
-          </Button>
-        </div>
-
-        {loading ? (
-          <div className="grid gap-6 sm:grid-cols-2">
-            {[...Array(2)].map((_, i) => (
-              <div key={i} className="h-80 animate-pulse rounded-lg border bg-muted/50" />
-            ))}
-          </div>
-        ) : featured.length > 0 ? (
-          <div className="grid gap-6 sm:grid-cols-2">
-            {featured.slice(0, 4).map((project) => (
-              <ProjectCard
-                key={project._id}
-                project={project}
-                onChange={(patch) =>
-                  setFeatured((list) =>
-                    list.map((p) => (p._id === project._id ? { ...p, ...patch } : p))
-                  )
-                }
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="rounded-lg border border-dashed py-12 text-center text-sm text-muted-foreground">
-            No projects published yet. Be the first to share one!
-          </div>
-        )}
       </section>
 
       {/* How it Works Section */}
@@ -184,9 +116,7 @@ export function Home() {
             <Link to="/feed" className="hover:text-foreground">Browse Projects</Link>
             <Link to="/register" className="hover:text-foreground">Create Account</Link>
             <Link to="/login" className="hover:text-foreground">Log In</Link>
-            <a href="https://github.com" target="_blank" rel="noopener noreferrer" className="hover:text-foreground">
-              GitHub Community
-            </a>
+            <Link to="/hackathons" className="hover:text-foreground">Hackathons</Link>
           </div>
         </div>
       </footer>

@@ -5,10 +5,11 @@ import { ApiError } from "../utils/apiError.js";
 import { User } from "../models/user.model.js";
 import { Project } from "../models/project.model.js";
 import { College } from "../models/college.model.js";
-import { Hackathon } from "../models/hackathon.model.js";
+import { Hackathon, HACKATHON_STATUSES } from "../models/hackathon.model.js";
 import { HackathonRoom } from "../models/hackathonRoom.model.js";
 import { HackathonRegistration } from "../models/hackathonRegistration.model.js";
 import { HackathonSubmission } from "../models/hackathonSubmission.model.js";
+import { getProjectCollaborators } from "../utils/projectMembers.js";
 import { escapeRegex } from "../utils/validators.js";
 
 const SAFE_USER_FIELDS =
@@ -19,6 +20,7 @@ const SAFE_USER_FIELDS =
  * Real database statistics via MongoDB aggregation and counts.
  */
 export const getAdminStats = asyncHandler(async (req, res) => {
+  const RECENT = 5;
   const [
     totalUsers,
     totalStudents,
@@ -26,20 +28,88 @@ export const getAdminStats = asyncHandler(async (req, res) => {
     totalColleges,
     totalHackathons,
     activeHackathons,
+    pendingSubmissions,
     privateRooms,
     publicRooms,
+    recentStudents,
+    recentProjects,
+    recentHackathons,
+    recentSubmissions,
   ] = await Promise.all([
     User.countDocuments(),
     User.countDocuments({ role: { $ne: "admin" } }),
     Project.countDocuments({ isDeleted: { $ne: true } }),
-    College.countDocuments({ status: "active" }),
+    College.countDocuments(),
     Hackathon.countDocuments(),
     Hackathon.countDocuments({
       status: { $in: ["registration_open", "ongoing"] },
     }),
+    HackathonSubmission.countDocuments({ status: "submitted" }),
     HackathonRoom.countDocuments({ visibility: "private" }),
     HackathonRoom.countDocuments({ visibility: "public" }),
+    User.find({ role: { $ne: "admin" } })
+      .select("userName fullName createdAt isSuspended isBanned")
+      .sort({ createdAt: -1 })
+      .limit(RECENT)
+      .lean(),
+    Project.find()
+      .select("title createdAt isDeleted userId")
+      .populate("userId", "userName fullName")
+      .sort({ createdAt: -1 })
+      .limit(RECENT)
+      .lean(),
+    Hackathon.find()
+      .select("title status createdAt")
+      .sort({ createdAt: -1 })
+      .limit(RECENT)
+      .lean(),
+    HackathonSubmission.find()
+      .select("status submittedAt project hackathon submittedBy")
+      .populate("project", "title")
+      .populate("hackathon", "title")
+      .populate("submittedBy", "userName fullName")
+      .sort({ submittedAt: -1 })
+      .limit(RECENT)
+      .lean(),
   ]);
+
+  // One flat, date-sorted feed so the overview renders a single table.
+  const recentActivity = [
+    ...recentStudents.map((u) => ({
+      type: "student",
+      title: u.fullName || u.userName,
+      detail: `@${u.userName} registered`,
+      status: u.isSuspended || u.isBanned ? "suspended" : "active",
+      date: u.createdAt,
+      link: "/admin/students",
+    })),
+    ...recentProjects.map((p) => ({
+      type: "project",
+      title: p.title,
+      detail: `by ${p.userId?.fullName || p.userId?.userName || "unknown"}`,
+      status: p.isDeleted ? "moderated" : "active",
+      date: p.createdAt,
+      link: "/admin/projects",
+    })),
+    ...recentHackathons.map((h) => ({
+      type: "hackathon",
+      title: h.title,
+      detail: "Hackathon created",
+      status: h.status,
+      date: h.createdAt,
+      link: "/admin/hackathons",
+    })),
+    ...recentSubmissions.map((s) => ({
+      type: "submission",
+      title: s.project?.title || "Project",
+      detail: `submitted to ${s.hackathon?.title || "hackathon"} by ${s.submittedBy?.fullName || s.submittedBy?.userName || "unknown"}`,
+      status: s.status,
+      date: s.submittedAt,
+      link: "/admin/submissions",
+    })),
+  ]
+    .sort((a, b) => new Date(b.date) - new Date(a.date))
+    .slice(0, 12);
 
   return res.status(200).json(
     new ApiResponse(
@@ -51,13 +121,32 @@ export const getAdminStats = asyncHandler(async (req, res) => {
         totalColleges,
         totalHackathons,
         activeHackathons,
+        pendingSubmissions,
         privateRooms,
         publicRooms,
+        recentActivity,
       },
       "Admin statistics fetched successfully"
     )
   );
 });
+
+// Users linked to a college either by reference or by the free-text name on their profile.
+const collegeUserFilter = async (collegeId) => {
+  if (!mongoose.isValidObjectId(collegeId)) {
+    throw new ApiError(400, "Invalid college id");
+  }
+  const college = await College.findById(collegeId).select("name").lean();
+  if (!college) {
+    throw new ApiError(404, "College not found");
+  }
+  return {
+    $or: [
+      { college: college._id },
+      { collegeName: { $regex: `^${escapeRegex(college.name)}$`, $options: "i" } },
+    ],
+  };
+};
 
 /**
  * GET /api/v1/admin/users
@@ -74,31 +163,40 @@ export const getAdminUsers = asyncHandler(async (req, res) => {
   const q = req.query.q?.trim();
   const role = req.query.role?.trim();
   const status = req.query.status?.trim();
+  const collegeId = req.query.college?.trim();
 
-  const filter = {};
+  // Each condition is its own $and clause so search, status and college never overwrite each other.
+  const conditions = [];
 
   if (q) {
     const pattern = escapeRegex(q);
-    filter.$or = [
-      { userName: { $regex: pattern, $options: "i" } },
-      { fullName: { $regex: pattern, $options: "i" } },
-      { email: { $regex: pattern, $options: "i" } },
-      { collegeName: { $regex: pattern, $options: "i" } },
-    ];
+    conditions.push({
+      $or: [
+        { userName: { $regex: pattern, $options: "i" } },
+        { fullName: { $regex: pattern, $options: "i" } },
+        { email: { $regex: pattern, $options: "i" } },
+        { collegeName: { $regex: pattern, $options: "i" } },
+      ],
+    });
   }
 
   if (role === "admin") {
-    filter.role = "admin";
+    conditions.push({ role: "admin" });
   } else if (role === "student") {
-    filter.role = { $ne: "admin" };
+    conditions.push({ role: { $ne: "admin" } });
   }
 
   if (status === "suspended") {
-    filter.$or = [{ isSuspended: true }, { isBanned: true }];
+    conditions.push({ $or: [{ isSuspended: true }, { isBanned: true }] });
   } else if (status === "active") {
-    filter.isSuspended = { $ne: true };
-    filter.isBanned = { $ne: true };
+    conditions.push({ isSuspended: { $ne: true }, isBanned: { $ne: true } });
   }
+
+  if (collegeId) {
+    conditions.push(await collegeUserFilter(collegeId));
+  }
+
+  const filter = conditions.length ? { $and: conditions } : {};
 
   const [users, total] = await Promise.all([
     User.find(filter)
@@ -225,26 +323,36 @@ export const getAdminProjects = asyncHandler(async (req, res) => {
   const q = req.query.q?.trim();
   const category = req.query.category?.trim();
   const status = req.query.status?.trim(); // "active", "moderated", "all"
+  const collegeId = req.query.college?.trim();
 
-  const filter = {};
+  const conditions = [];
 
   if (q) {
-    const pattern = escapeRegex(q);
-    filter.$or = [
-      { title: { $regex: pattern, $options: "i" } },
-      { description: { $regex: pattern, $options: "i" } },
-    ];
+    const pattern = { $regex: escapeRegex(q), $options: "i" };
+    const owners = await User.find({
+      $or: [{ userName: pattern }, { fullName: pattern }, { email: pattern }],
+    }).distinct("_id");
+    conditions.push({
+      $or: [{ title: pattern }, { description: pattern }, { userId: { $in: owners } }],
+    });
   }
 
   if (category && category !== "All") {
-    filter.category = category;
+    conditions.push({ category });
   }
 
   if (status === "moderated") {
-    filter.isDeleted = true;
+    conditions.push({ isDeleted: true });
   } else if (status === "active") {
-    filter.isDeleted = { $ne: true };
+    conditions.push({ isDeleted: { $ne: true } });
   }
+
+  if (collegeId) {
+    const collegeOwners = await User.find(await collegeUserFilter(collegeId)).distinct("_id");
+    conditions.push({ userId: { $in: collegeOwners } });
+  }
+
+  const filter = conditions.length ? { $and: conditions } : {};
 
   const [projects, total] = await Promise.all([
     Project.find(filter)
@@ -270,6 +378,45 @@ export const getAdminProjects = asyncHandler(async (req, res) => {
         },
       },
       "Projects fetched successfully"
+    )
+  );
+});
+
+/**
+ * GET /api/v1/admin/projects/:projectId
+ * Project with owner, approved collaborators (the team) and hackathon submissions.
+ */
+export const getAdminProjectDetails = asyncHandler(async (req, res) => {
+  const { projectId } = req.params;
+  if (!mongoose.isValidObjectId(projectId)) {
+    throw new ApiError(400, "Invalid project id");
+  }
+
+  const project = await Project.findById(projectId)
+    .populate("userId", SAFE_USER_FIELDS)
+    .populate("moderatedBy", "userName fullName")
+    .lean();
+  if (!project) {
+    throw new ApiError(404, "Project not found");
+  }
+
+  const [teamMembers, submissions] = await Promise.all([
+    getProjectCollaborators(project._id, project.userId?._id, "userName fullName email avatar collegeName"),
+    HackathonSubmission.find({ project: project._id })
+      .populate("hackathon", "title status")
+      .select("hackathon status submittedAt")
+      .lean(),
+  ]);
+
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        ...project,
+        teamMembers,
+        hackathonSubmissions: submissions,
+      },
+      "Project details fetched successfully"
     )
   );
 });
@@ -324,9 +471,29 @@ export const getAdminColleges = asyncHandler(async (req, res) => {
   }
 
   const colleges = await College.find(filter).sort({ name: 1 }).lean();
+
+  // Same matching rule as collegeUserFilter: by reference or by profile college name.
+  const [byRef, byName] = await Promise.all([
+    User.aggregate([
+      { $match: { role: { $ne: "admin" }, college: { $in: colleges.map((c) => c._id) } } },
+      { $group: { _id: "$college", count: { $sum: 1 } } },
+    ]),
+    User.aggregate([
+      { $match: { role: { $ne: "admin" }, college: null, collegeName: { $ne: "" } } },
+      { $group: { _id: { $toLower: "$collegeName" }, count: { $sum: 1 } } },
+    ]),
+  ]);
+  const refMap = new Map(byRef.map((r) => [String(r._id), r.count]));
+  const nameMap = new Map(byName.map((r) => [r._id, r.count]));
+
+  const enriched = colleges.map((c) => ({
+    ...c,
+    studentCount: (refMap.get(String(c._id)) || 0) + (nameMap.get(c.name.toLowerCase()) || 0),
+  }));
+
   return res
     .status(200)
-    .json(new ApiResponse(200, colleges, "Colleges fetched successfully"));
+    .json(new ApiResponse(200, enriched, "Colleges fetched successfully"));
 });
 
 export const createCollege = asyncHandler(async (req, res) => {
@@ -454,79 +621,135 @@ export const getAdminHackathons = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, enriched, "Hackathons fetched successfully"));
 });
 
-export const createHackathon = asyncHandler(async (req, res) => {
-  const {
-    title,
-    description,
-    theme,
-    organizer,
-    participatingColleges,
-    startDate,
-    endDate,
-    registrationDeadline,
-    status = "upcoming",
-    visibility = "public",
-    participationMode = "individual",
-    maximumParticipants,
-    maximumTeamSize,
-  } = req.body;
+const toDate = (value) => {
+  if (value === undefined || value === null || value === "") return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+};
 
-  if (!title?.trim() || !description?.trim()) {
+/**
+ * Validates a hackathon payload merged over the existing document (for edits),
+ * so date ordering is always checked against the values that will be saved.
+ */
+const buildHackathonFields = (body, existing = {}) => {
+  const pick = (key) => (body[key] !== undefined ? body[key] : existing[key]);
+
+  const title = `${pick("title") ?? ""}`.trim();
+  const description = `${pick("description") ?? ""}`.trim();
+  if (!title || !description) {
     throw new ApiError(400, "Title and description are required");
   }
 
-  const deadlineValue = registrationDeadline || req.body.registrationEnd || startDate;
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  const deadline = new Date(deadlineValue);
+  const startDate = toDate(pick("startDate"));
+  const endDate = toDate(pick("endDate"));
+  // Falls back to the event start, as the API always has, when no registration end is given.
+  const registrationDeadline = toDate(
+    pick("registrationDeadline") || body.registrationEnd || pick("startDate")
+  );
+  const registrationStartDate = toDate(pick("registrationStartDate"));
 
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || Number.isNaN(deadline.getTime())) {
-    throw new ApiError(400, "Valid start, end, and registration deadline dates are required");
+  if (!startDate || !endDate || !registrationDeadline || registrationStartDate === undefined) {
+    throw new ApiError(400, "Valid event start, event end and registration end dates are required");
+  }
+  if (startDate >= endDate) {
+    throw new ApiError(400, "Event start date must be before the event end date");
+  }
+  if (registrationDeadline > endDate) {
+    throw new ApiError(400, "Registration end date cannot be after the event end date");
+  }
+  if (registrationStartDate && registrationStartDate >= registrationDeadline) {
+    throw new ApiError(400, "Registration start date must be before the registration end date");
   }
 
-  if (start >= end) {
-    throw new ApiError(400, "Start date must be before end date");
+  const status = pick("status") ?? "upcoming";
+  const visibility = pick("visibility") ?? "public";
+  const participationMode = pick("participationMode") ?? "individual";
+  if (!HACKATHON_STATUSES.includes(status)) {
+    throw new ApiError(400, `Status must be one of: ${HACKATHON_STATUSES.join(", ")}`);
+  }
+  if (!["public", "private"].includes(visibility)) {
+    throw new ApiError(400, "Visibility must be 'public' or 'private'");
+  }
+  if (!["individual", "team"].includes(participationMode)) {
+    throw new ApiError(400, "Participation mode must be 'individual' or 'team'");
   }
 
-  if (deadline > end) {
-    throw new ApiError(400, "Registration deadline cannot be after hackathon end date");
+  const maxParticipantsRaw = pick("maximumParticipants");
+  const maximumParticipants = maxParticipantsRaw ? Number(maxParticipantsRaw) : null;
+  if (maximumParticipants !== null && (!Number.isInteger(maximumParticipants) || maximumParticipants < 1)) {
+    throw new ApiError(400, "Maximum participants must be a positive whole number");
+  }
+  const maximumTeamSize = Number(pick("maximumTeamSize") || 4);
+  if (!Number.isInteger(maximumTeamSize) || maximumTeamSize < 1 || maximumTeamSize > 20) {
+    throw new ApiError(400, "Maximum team size must be between 1 and 20");
   }
 
-  // Create unique slug from title
-  const baseSlug = title
+  const colleges = pick("participatingColleges");
+  const participatingColleges = Array.isArray(colleges)
+    ? colleges.map((c) => c?._id || c).filter((c) => mongoose.isValidObjectId(c))
+    : [];
+
+  return {
+    title,
+    description,
+    theme: `${pick("theme") ?? ""}`.trim() || "Open Innovation",
+    organizer: `${pick("organizer") ?? ""}`.trim() || "DevSpotlight",
+    eligibility: `${pick("eligibility") ?? ""}`.trim(),
+    rules: `${pick("rules") ?? ""}`.trim(),
+    participatingColleges,
+    startDate,
+    endDate,
+    registrationStartDate,
+    registrationDeadline,
+    status,
+    visibility,
+    participationMode,
+    maximumParticipants,
+    maximumTeamSize,
+  };
+};
+
+// Room lifecycle follows the event status, except archived rooms which stay archived.
+const ROOM_STATUS_FOR_HACKATHON = {
+  draft: "upcoming",
+  upcoming: "upcoming",
+  registration_open: "open",
+  ongoing: "open",
+  completed: "completed",
+  cancelled: "completed",
+};
+
+const syncRoomWithHackathon = (hackathon) =>
+  HackathonRoom.updateOne(
+    { hackathon: hackathon._id, status: { $ne: "archived" } },
+    {
+      $set: {
+        status: ROOM_STATUS_FOR_HACKATHON[hackathon.status],
+        title: `${hackathon.title} Room`,
+        participatingColleges: hackathon.participatingColleges,
+      },
+    }
+  );
+
+export const createHackathon = asyncHandler(async (req, res) => {
+  const fields = buildHackathonFields(req.body);
+
+  const baseSlug = fields.title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
   const slug = `${baseSlug}-${Date.now().toString(36)}`;
 
-  const hackathon = await Hackathon.create({
-    title: title.trim(),
-    slug,
-    description: description.trim(),
-    theme: theme?.trim() || "Open Innovation",
-    organizer: organizer?.trim() || "DevSpotlight",
-    participatingColleges: Array.isArray(participatingColleges)
-      ? participatingColleges
-      : [],
-    startDate: start,
-    endDate: end,
-    registrationDeadline: deadline,
-    status,
-    visibility,
-    participationMode,
-    maximumParticipants: maximumParticipants ? Number(maximumParticipants) : null,
-    maximumTeamSize: maximumTeamSize ? Number(maximumTeamSize) : 4,
-    createdBy: req.user._id,
-  });
+  const hackathon = await Hackathon.create({ ...fields, slug, createdBy: req.user._id });
 
-  // Automatically provision the single dedicated HackathonRoom (1-to-1 relationship)
+  // Every hackathon gets exactly one room; it starts private.
   const room = await HackathonRoom.create({
     hackathon: hackathon._id,
     title: `${hackathon.title} Room`,
     description: `Official collaboration and project submission space for ${hackathon.title}.`,
     participatingColleges: hackathon.participatingColleges,
-    visibility: "private", // Always private during hackathon
-    status: "open",
+    visibility: "private",
+    status: ROOM_STATUS_FOR_HACKATHON[hackathon.status],
     createdBy: req.user._id,
   });
 
@@ -541,53 +764,17 @@ export const createHackathon = asyncHandler(async (req, res) => {
 
 export const updateHackathon = asyncHandler(async (req, res) => {
   const { hackathonId } = req.params;
+  if (!mongoose.isValidObjectId(hackathonId)) {
+    throw new ApiError(400, "Invalid hackathon id");
+  }
   const hackathon = await Hackathon.findById(hackathonId);
   if (!hackathon) {
     throw new ApiError(404, "Hackathon not found");
   }
 
-  const {
-    title,
-    description,
-    theme,
-    organizer,
-    participatingColleges,
-    startDate,
-    endDate,
-    registrationDeadline,
-    status,
-    visibility,
-    participationMode,
-    maximumParticipants,
-    maximumTeamSize,
-  } = req.body;
-
-  if (title?.trim()) hackathon.title = title.trim();
-  if (description?.trim()) hackathon.description = description.trim();
-  if (theme !== undefined) hackathon.theme = theme.trim();
-  if (organizer !== undefined) hackathon.organizer = organizer.trim();
-  if (Array.isArray(participatingColleges)) {
-    hackathon.participatingColleges = participatingColleges;
-    // Keep room colleges in sync
-    await HackathonRoom.updateOne(
-      { hackathon: hackathon._id },
-      { $set: { participatingColleges } }
-    );
-  }
-  if (startDate) hackathon.startDate = new Date(startDate);
-  if (endDate) hackathon.endDate = new Date(endDate);
-  if (registrationDeadline) hackathon.registrationDeadline = new Date(registrationDeadline);
-  if (status) hackathon.status = status;
-  if (visibility) hackathon.visibility = visibility;
-  if (participationMode) hackathon.participationMode = participationMode;
-  if (maximumParticipants !== undefined) {
-    hackathon.maximumParticipants = maximumParticipants ? Number(maximumParticipants) : null;
-  }
-  if (maximumTeamSize !== undefined) {
-    hackathon.maximumTeamSize = Number(maximumTeamSize) || 4;
-  }
-
+  hackathon.set(buildHackathonFields(req.body, hackathon.toObject()));
   await hackathon.save();
+  await syncRoomWithHackathon(hackathon);
 
   return res
     .status(200)
@@ -598,17 +785,11 @@ export const updateHackathonStatus = asyncHandler(async (req, res) => {
   const { hackathonId } = req.params;
   const { status } = req.body;
 
-  const validStatuses = [
-    "draft",
-    "upcoming",
-    "registration_open",
-    "ongoing",
-    "completed",
-    "cancelled",
-  ];
-
-  if (!validStatuses.includes(status)) {
-    throw new ApiError(400, `Status must be one of: ${validStatuses.join(", ")}`);
+  if (!HACKATHON_STATUSES.includes(status)) {
+    throw new ApiError(400, `Status must be one of: ${HACKATHON_STATUSES.join(", ")}`);
+  }
+  if (!mongoose.isValidObjectId(hackathonId)) {
+    throw new ApiError(400, "Invalid hackathon id");
   }
 
   const hackathon = await Hackathon.findByIdAndUpdate(
@@ -621,18 +802,13 @@ export const updateHackathonStatus = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Hackathon not found");
   }
 
-  // If hackathon is marked completed, update room status
-  if (status === "completed") {
-    await HackathonRoom.updateOne(
-      { hackathon: hackathon._id },
-      { $set: { status: "completed" } }
-    );
-  }
+  await syncRoomWithHackathon(hackathon);
 
   return res
     .status(200)
     .json(new ApiResponse(200, hackathon, `Hackathon status changed to ${status}`));
 });
+
 
 export const getHackathonParticipants = asyncHandler(async (req, res) => {
   const { hackathonId } = req.params;
@@ -723,6 +899,10 @@ export const publishRoom = asyncHandler(async (req, res) => {
     );
   }
 
+  if (room.status === "archived") {
+    throw new ApiError(400, "Archived rooms cannot be published. Restore the room first.");
+  }
+
   room.visibility = "public";
   room.publishedAt = new Date();
   room.publishedBy = req.user._id;
@@ -758,6 +938,106 @@ export const unpublishRoom = asyncHandler(async (req, res) => {
   return res
     .status(200)
     .json(new ApiResponse(200, room, "Hackathon room made private successfully"));
+});
+
+/**
+ * PATCH /api/v1/admin/rooms/:roomId/archive  body: { archived: boolean }
+ * Archiving also unpublishes, so archived rooms never appear in the public showcase.
+ */
+export const setRoomArchived = asyncHandler(async (req, res) => {
+  const { roomId } = req.params;
+  const archived = Boolean(req.body?.archived);
+  if (!mongoose.isValidObjectId(roomId)) {
+    throw new ApiError(400, "Invalid room id");
+  }
+
+  const room = await HackathonRoom.findById(roomId).populate("hackathon", "status");
+  if (!room) {
+    throw new ApiError(404, "Hackathon room not found");
+  }
+
+  if (archived) {
+    if (!["completed", "cancelled"].includes(room.hackathon?.status)) {
+      throw new ApiError(400, "Only rooms of completed or cancelled hackathons can be archived");
+    }
+    room.status = "archived";
+    room.visibility = "private";
+    room.publishedAt = null;
+    room.publishedBy = null;
+  } else {
+    room.status = "completed";
+  }
+
+  await room.save();
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, room, archived ? "Room archived" : "Room restored"));
+});
+
+/**
+ * GET /api/v1/admin/submissions?status=&hackathon=
+ * All hackathon submissions for review.
+ */
+export const getAdminSubmissions = asyncHandler(async (req, res) => {
+  const filter = {};
+  const status = req.query.status?.trim();
+  const hackathonId = req.query.hackathon?.trim();
+
+  if (status && status !== "all") {
+    if (!["submitted", "accepted", "rejected"].includes(status)) {
+      throw new ApiError(400, "Invalid submission status filter");
+    }
+    filter.status = status;
+  }
+  if (hackathonId) {
+    if (!mongoose.isValidObjectId(hackathonId)) {
+      throw new ApiError(400, "Invalid hackathon id");
+    }
+    filter.hackathon = hackathonId;
+  }
+
+  const submissions = await HackathonSubmission.find(filter)
+    .populate("project", "title description techStack githubLink liveLink isDeleted")
+    .populate("hackathon", "title status")
+    .populate("submittedBy", "userName fullName email avatar")
+    .populate("teamMembers", "userName fullName")
+    .sort({ submittedAt: -1 })
+    .limit(200)
+    .lean();
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, submissions, "Submissions fetched successfully"));
+});
+
+/**
+ * PATCH /api/v1/admin/submissions/:submissionId/status  body: { status }
+ * Only accepted submissions are shown on a published showcase.
+ */
+export const updateSubmissionStatus = asyncHandler(async (req, res) => {
+  const { submissionId } = req.params;
+  const { status } = req.body;
+
+  if (!mongoose.isValidObjectId(submissionId)) {
+    throw new ApiError(400, "Invalid submission id");
+  }
+  if (!["submitted", "accepted", "rejected"].includes(status)) {
+    throw new ApiError(400, "Status must be 'submitted', 'accepted' or 'rejected'");
+  }
+
+  const submission = await HackathonSubmission.findByIdAndUpdate(
+    submissionId,
+    { $set: { status } },
+    { new: true }
+  );
+  if (!submission) {
+    throw new ApiError(404, "Submission not found");
+  }
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, submission, `Submission marked as ${status}`));
 });
 
 /**

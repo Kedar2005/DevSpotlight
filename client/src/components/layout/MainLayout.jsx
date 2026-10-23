@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { Outlet } from "react-router-dom";
 import { Navbar } from "./Navbar";
 import { Sidebar } from "./Sidebar";
+import { LoadingState } from "../shared/PageState";
 
 export function MainLayout() {
   const [collapsed, setCollapsed] = useState(() => {
@@ -59,7 +60,9 @@ export function MainLayout() {
           />
         )}
         <main className="min-w-0 flex-1 transition-all duration-200 ease-in-out">
-          <Outlet />
+          <Suspense fallback={<LoadingState />}>
+            <Outlet />
+          </Suspense>
         </main>
       </div>
     </div>

@@ -1,855 +1,551 @@
-import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
-import {
-  Trophy,
-  Plus,
-  Search,
-  Filter,
-  Users,
-  Calendar,
-  Clock,
-  Layers,
-  ExternalLink,
-  Edit2,
-  RefreshCw,
-  AlertCircle,
-  CheckCircle,
-  FileText,
-  MapPin,
-  Award
-} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { Plus, Search, Trophy, Users, Pencil, ClipboardCheck, ExternalLink } from "lucide-react";
 import {
   getAdminHackathons,
   createHackathon,
   updateHackathon,
   updateHackathonStatus,
   getHackathonParticipants,
-  getHackathonSubmissions,
   getAdminColleges,
 } from "../../api/admin.api";
+import { getErrorMessage } from "../../lib/errors";
+import { HACKATHON_STATUS, formatDate, toDateTimeInput } from "../../lib/hackathon";
+import { Button } from "../../components/ui/button";
+import { Input } from "../../components/ui/input";
+import { Select } from "../../components/ui/select";
+import { Textarea } from "../../components/ui/textarea";
+import { Alert } from "../../components/ui/alert";
+import { Modal } from "../../components/ui/modal";
+import { Avatar } from "../../components/ui/avatar";
+import {
+  PageHeader,
+  LoadingState,
+  EmptyState,
+  StatusPill,
+  ConfirmDialog,
+} from "../../components/shared/PageState";
 
-const STATUS_CONFIG = {
-  draft: { label: "Draft", bg: "bg-slate-500/10", border: "border-slate-500/20", text: "text-slate-400" },
-  upcoming: { label: "Upcoming", bg: "bg-blue-500/10", border: "border-blue-500/20", text: "text-blue-400" },
-  registration_open: { label: "Registration Open", bg: "bg-emerald-500/10", border: "border-emerald-500/20", text: "text-emerald-400" },
-  ongoing: { label: "Ongoing", bg: "bg-amber-500/10", border: "border-amber-500/20", text: "text-amber-400" },
-  completed: { label: "Completed", bg: "bg-purple-500/10", border: "border-purple-500/20", text: "text-purple-400" },
-  cancelled: { label: "Cancelled", bg: "bg-rose-500/10", border: "border-rose-500/20", text: "text-rose-400" },
+const EMPTY_FORM = {
+  title: "",
+  description: "",
+  theme: "",
+  organizer: "",
+  eligibility: "",
+  rules: "",
+  registrationStartDate: "",
+  registrationDeadline: "",
+  startDate: "",
+  endDate: "",
+  status: "upcoming",
+  visibility: "public",
+  participationMode: "individual",
+  maximumParticipants: "",
+  maximumTeamSize: "4",
+  participatingColleges: [],
 };
 
-const ALL_STATUSES = ["draft", "upcoming", "registration_open", "ongoing", "completed", "cancelled"];
+// Mirrors buildHackathonFields on the server so mistakes show before submitting.
+function validateForm(form) {
+  if (!form.title.trim()) return "Title is required.";
+  if (!form.description.trim()) return "Description is required.";
+  if (!form.startDate || !form.endDate || !form.registrationDeadline) {
+    return "Event start, event end and registration end dates are required.";
+  }
+  const start = new Date(form.startDate);
+  const end = new Date(form.endDate);
+  const regEnd = new Date(form.registrationDeadline);
+  if (start >= end) return "Event start must be before event end.";
+  if (regEnd > end) return "Registration end cannot be after the event end.";
+  if (form.registrationStartDate && new Date(form.registrationStartDate) >= regEnd) {
+    return "Registration start must be before registration end.";
+  }
+  if (form.maximumParticipants && !(Number(form.maximumParticipants) >= 1)) {
+    return "Maximum participants must be at least 1.";
+  }
+  const teamSize = Number(form.maximumTeamSize);
+  if (!Number.isInteger(teamSize) || teamSize < 1 || teamSize > 20) {
+    return "Maximum team size must be between 1 and 20.";
+  }
+  return "";
+}
+
+const toPayload = (form) => ({
+  ...form,
+  registrationStartDate: form.registrationStartDate ? new Date(form.registrationStartDate).toISOString() : "",
+  registrationDeadline: new Date(form.registrationDeadline).toISOString(),
+  startDate: new Date(form.startDate).toISOString(),
+  endDate: new Date(form.endDate).toISOString(),
+  maximumParticipants: form.maximumParticipants || null,
+});
+
+function Field({ label, htmlFor, hint, children, className = "" }) {
+  return (
+    <div className={`space-y-1.5 ${className}`}>
+      <label htmlFor={htmlFor} className="text-xs font-medium text-foreground">
+        {label}
+      </label>
+      {children}
+      {hint ? <p className="text-[11px] text-muted-foreground">{hint}</p> : null}
+    </div>
+  );
+}
 
 export default function AdminHackathons() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [hackathons, setHackathons] = useState([]);
   const [colleges, setColleges] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [searchTerm, setSearchTerm] = useState("");
-  const [actionError, setActionError] = useState("");
-  const [actionSuccess, setActionSuccess] = useState("");
-
-  // Modals
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [editingHackathon, setEditingHackathon] = useState(null);
-  const [participantsModal, setParticipantsModal] = useState({ open: false, hackathon: null, data: [], loading: false });
-  const [submissionsModal, setSubmissionsModal] = useState({ open: false, hackathon: null, data: [], loading: false });
-
-  // Form state
-  const initialForm = {
-    title: "",
-    slug: "",
-    description: "",
-    bannerImage: "",
-    college: "",
-    mode: "hybrid",
-    location: "",
-    registrationStart: "",
-    registrationEnd: "",
-    startDate: "",
-    endDate: "",
-    maxParticipants: 100,
-    tags: "",
-    prizes: [{ name: "1st Place", amount: "₹25,000", description: "Winner grand prize" }]
-  };
-  const [formData, setFormData] = useState(initialForm);
-  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+
+  // Create / edit
+  const [formOpen, setFormOpen] = useState(searchParams.get("create") === "1");
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [formError, setFormError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  // Status change confirmation
+  const [statusChange, setStatusChange] = useState(null);
+  const [statusBusy, setStatusBusy] = useState(false);
+  const [statusError, setStatusError] = useState("");
+
+  // Participants
+  const [participantsFor, setParticipantsFor] = useState(null);
+  const [participants, setParticipants] = useState([]);
+  const [participantsLoading, setParticipantsLoading] = useState(false);
+  const [participantsError, setParticipantsError] = useState("");
 
   useEffect(() => {
     let active = true;
-
-    Promise.all([
-      getAdminHackathons(),
-      getAdminColleges({ status: "active", limit: 100 })
-    ])
-      .then(([hData, cData]) => {
+    Promise.all([getAdminHackathons(), getAdminColleges()])
+      .then(([hackathonData, collegeData]) => {
         if (!active) return;
-        setHackathons(hData || []);
-        setColleges(cData?.colleges || []);
+        setHackathons(hackathonData || []);
+        setColleges(collegeData || []);
+        setError("");
       })
       .catch((err) => {
-        if (!active) return;
-        setActionError(err?.response?.data?.message || "Failed to load hackathons");
+        if (active) setError(getErrorMessage(err, "Failed to load hackathons."));
       })
       .finally(() => {
-        if (!active) return;
-        setLoading(false);
+        if (active) setLoading(false);
       });
-
     return () => {
       active = false;
     };
   }, [reloadKey]);
 
-  const fetchHackathons = () => {
-    setLoading(true);
-    setReloadKey((prev) => prev + 1);
+  const reload = () => setReloadKey((k) => k + 1);
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return hackathons.filter(
+      (h) =>
+        (statusFilter === "all" || h.status === statusFilter) &&
+        (!q || h.title.toLowerCase().includes(q) || h.organizer?.toLowerCase().includes(q))
+    );
+  }, [hackathons, query, statusFilter]);
+
+  const openCreate = () => {
+    setEditing(null);
+    setForm(EMPTY_FORM);
+    setFormError("");
+    setFormOpen(true);
   };
 
-  const handleOpenCreate = () => {
-    setEditingHackathon(null);
-    setFormData(initialForm);
-    setIsCreateOpen(true);
-  };
-
-  const handleOpenEdit = (h) => {
-    setEditingHackathon(h);
-    setFormData({
+  const openEdit = (h) => {
+    setEditing(h);
+    setForm({
       title: h.title || "",
-      slug: h.slug || "",
       description: h.description || "",
-      bannerImage: h.bannerImage || "",
-      college: h.college?._id || h.college || "",
-      mode: h.mode || "hybrid",
-      location: h.location || "",
-      registrationStart: h.registrationStart ? new Date(h.registrationStart).toISOString().slice(0, 16) : "",
-      registrationEnd: h.registrationEnd ? new Date(h.registrationEnd).toISOString().slice(0, 16) : "",
-      startDate: h.startDate ? new Date(h.startDate).toISOString().slice(0, 16) : "",
-      endDate: h.endDate ? new Date(h.endDate).toISOString().slice(0, 16) : "",
-      maxParticipants: h.maxParticipants || 100,
-      tags: Array.isArray(h.tags) ? h.tags.join(", ") : "",
-      prizes: h.prizes && h.prizes.length > 0 ? h.prizes : [{ name: "1st Place", amount: "₹25,000", description: "" }]
+      theme: h.theme || "",
+      organizer: h.organizer || "",
+      eligibility: h.eligibility || "",
+      rules: h.rules || "",
+      registrationStartDate: toDateTimeInput(h.registrationStartDate),
+      registrationDeadline: toDateTimeInput(h.registrationDeadline),
+      startDate: toDateTimeInput(h.startDate),
+      endDate: toDateTimeInput(h.endDate),
+      status: h.status,
+      visibility: h.visibility,
+      participationMode: h.participationMode,
+      maximumParticipants: h.maximumParticipants ?? "",
+      maximumTeamSize: String(h.maximumTeamSize ?? 4),
+      participatingColleges: (h.participatingColleges || []).map((c) => c._id || c),
     });
-    setIsCreateOpen(true);
+    setFormError("");
+    setFormOpen(true);
   };
 
-  const handleSaveHackathon = async (e) => {
+  const closeForm = () => {
+    setFormOpen(false);
+    if (searchParams.has("create")) setSearchParams({}, { replace: true });
+  };
+
+  const setField = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  const toggleCollege = (id) =>
+    setForm((f) => ({
+      ...f,
+      participatingColleges: f.participatingColleges.includes(id)
+        ? f.participatingColleges.filter((c) => c !== id)
+        : [...f.participatingColleges, id],
+    }));
+
+  const handleSave = async (e) => {
     e.preventDefault();
-    setActionError("");
-    setActionSuccess("");
-    setSubmitting(true);
-
+    const problem = validateForm(form);
+    if (problem) {
+      setFormError(problem);
+      return;
+    }
+    setSaving(true);
+    setFormError("");
     try {
-      const payload = {
-        ...formData,
-        tags: formData.tags ? formData.tags.split(",").map(t => t.trim()).filter(Boolean) : [],
-        maxParticipants: Number(formData.maxParticipants) || 100,
-        college: formData.college || undefined,
-      };
-
-      if (editingHackathon) {
-        await updateHackathon(editingHackathon._id, payload);
-        setActionSuccess(`Hackathon "${formData.title}" updated successfully.`);
+      if (editing) {
+        await updateHackathon(editing._id, toPayload(form));
+        setNotice(`"${form.title}" updated.`);
       } else {
-        await createHackathon(payload);
-        setActionSuccess(`Hackathon "${formData.title}" created with provisioned private room.`);
+        await createHackathon(toPayload(form));
+        setNotice(`"${form.title}" created with a private hackathon room.`);
       }
-
-      setIsCreateOpen(false);
-      fetchHackathons();
+      closeForm();
+      reload();
     } catch (err) {
-      setActionError(err?.response?.data?.message || "Failed to save hackathon");
+      setFormError(getErrorMessage(err, "Failed to save hackathon."));
     } finally {
-      setSubmitting(false);
+      setSaving(false);
     }
   };
 
-  const handleStatusChange = async (hackathonId, newStatus) => {
-    setActionError("");
-    setActionSuccess("");
+  const confirmStatusChange = async () => {
+    setStatusBusy(true);
+    setStatusError("");
     try {
-      await updateHackathonStatus(hackathonId, newStatus);
-      setActionSuccess(`Status updated to "${newStatus.replace("_", " ")}".`);
-      fetchHackathons();
+      await updateHackathonStatus(statusChange.hackathon._id, statusChange.status);
+      setNotice(`"${statusChange.hackathon.title}" is now ${HACKATHON_STATUS[statusChange.status].label.toLowerCase()}.`);
+      setStatusChange(null);
+      reload();
     } catch (err) {
-      setActionError(err?.response?.data?.message || "Failed to update status");
+      setStatusError(getErrorMessage(err, "Failed to change status."));
+    } finally {
+      setStatusBusy(false);
     }
   };
 
-  const handleViewParticipants = async (h) => {
-    setParticipantsModal({ open: true, hackathon: h, data: [], loading: true });
+  const openParticipants = async (h) => {
+    setParticipantsFor(h);
+    setParticipants([]);
+    setParticipantsError("");
+    setParticipantsLoading(true);
     try {
-      const list = await getHackathonParticipants(h._id);
-      setParticipantsModal({ open: true, hackathon: h, data: list || [], loading: false });
+      setParticipants((await getHackathonParticipants(h._id)) || []);
     } catch (err) {
-      setActionError(err?.response?.data?.message || "Failed to load participants");
-      setParticipantsModal({ open: false, hackathon: null, data: [], loading: false });
+      setParticipantsError(getErrorMessage(err, "Failed to load participants."));
+    } finally {
+      setParticipantsLoading(false);
     }
   };
-
-  const handleViewSubmissions = async (h) => {
-    setSubmissionsModal({ open: true, hackathon: h, data: [], loading: true });
-    try {
-      const list = await getHackathonSubmissions(h._id);
-      setSubmissionsModal({ open: true, hackathon: h, data: list || [], loading: false });
-    } catch (err) {
-      setActionError(err?.response?.data?.message || "Failed to load submissions");
-      setSubmissionsModal({ open: false, hackathon: null, data: [], loading: false });
-    }
-  };
-
-  const addPrizeRow = () => {
-    setFormData(prev => ({
-      ...prev,
-      prizes: [...prev.prizes, { name: "", amount: "", description: "" }]
-    }));
-  };
-
-  const updatePrizeRow = (index, field, value) => {
-    setFormData(prev => {
-      const newPrizes = [...prev.prizes];
-      newPrizes[index][field] = value;
-      return { ...prev, prizes: newPrizes };
-    });
-  };
-
-  const removePrizeRow = (index) => {
-    setFormData(prev => ({
-      ...prev,
-      prizes: prev.prizes.filter((_, i) => i !== index)
-    }));
-  };
-
-  const filtered = hackathons.filter(h => {
-    const matchesStatus = statusFilter === "all" || h.status === statusFilter;
-    const matchesSearch =
-      h.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      h.college?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      h.slug?.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesStatus && matchesSearch;
-  });
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
-            <Trophy className="h-6 w-6 text-amber-400" />
-            Hackathons Management
-          </h1>
-          <p className="text-sm text-slate-400 mt-1">
-            Create, monitor, and regulate collegiate hackathons and access-controlled rooms.
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={fetchHackathons}
-            className="p-2.5 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-slate-300 transition"
-            title="Refresh"
-          >
-            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-          </button>
-          <button
-            onClick={handleOpenCreate}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-medium shadow-lg shadow-indigo-500/20 transition cursor-pointer"
-          >
-            <Plus className="h-4 w-4" />
-            Create Hackathon
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="Hackathons"
+        description="Create and schedule hackathons, manage registrations and close events."
+        actions={
+          <Button size="sm" onClick={openCreate}>
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            Create hackathon
+          </Button>
+        }
+      />
 
-      {/* Notifications */}
-      {actionError && (
-        <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 flex items-center justify-between text-sm">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            <span>{actionError}</span>
-          </div>
-          <button onClick={() => setActionError("")} className="text-rose-400 hover:text-white">&times;</button>
-        </div>
+      {notice && (
+        <Alert tone="success" className="flex items-center justify-between gap-3">
+          <span>{notice}</span>
+          <button type="button" className="text-xs hover:underline" onClick={() => setNotice("")}>
+            Dismiss
+          </button>
+        </Alert>
       )}
-      {actionSuccess && (
-        <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 flex items-center justify-between text-sm">
-          <div className="flex items-center gap-2">
-            <CheckCircle className="h-4 w-4 shrink-0" />
-            <span>{actionSuccess}</span>
-          </div>
-          <button onClick={() => setActionSuccess("")} className="text-emerald-400 hover:text-white">&times;</button>
-        </div>
-      )}
+      {error && <Alert tone="error">{error}</Alert>}
 
-      {/* Filter / Search Bar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-900/40 p-3 rounded-2xl border border-white/5">
-        <div className="relative w-full sm:w-80">
-          <Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
-          <input
-            type="text"
-            placeholder="Search by title, college, slug..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-slate-950/60 border border-white/10 rounded-xl pl-10 pr-4 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition"
+      <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3 sm:flex-row sm:items-center">
+        <div className="relative flex-1 sm:max-w-sm">
+          <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+          <Input
+            aria-label="Search hackathons"
+            placeholder="Search by title or organizer…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className="h-8 pl-8 text-xs"
           />
         </div>
-
-        <div className="flex items-center gap-2 w-full sm:w-auto overflow-x-auto pb-1 sm:pb-0">
-          <Filter className="h-4 w-4 text-slate-500 hidden sm:block" />
-          {["all", ...ALL_STATUSES].map((status) => (
-            <button
-              key={status}
-              onClick={() => setStatusFilter(status)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap capitalize transition ${
-                statusFilter === status
-                  ? "bg-indigo-600 text-white"
-                  : "bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white"
-              }`}
-            >
-              {status.replace("_", " ")}
-            </button>
+        <Select
+          aria-label="Filter by status"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="h-8 text-xs sm:w-48"
+        >
+          <option value="all">All statuses</option>
+          {Object.entries(HACKATHON_STATUS).map(([value, { label }]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
           ))}
-        </div>
+        </Select>
       </div>
 
-      {/* Hackathons Table / Cards */}
-      {loading ? (
-        <div className="p-12 text-center text-slate-400 flex flex-col items-center justify-center gap-3">
-          <RefreshCw className="h-6 w-6 animate-spin text-indigo-400" />
-          <span>Loading hackathons...</span>
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="p-12 text-center rounded-2xl border border-white/5 bg-slate-900/30">
-          <Trophy className="h-10 w-10 text-slate-600 mx-auto mb-3" />
-          <h3 className="text-base font-semibold text-white">No hackathons found</h3>
-          <p className="text-sm text-slate-400 mt-1 max-w-sm mx-auto">
-            {searchTerm || statusFilter !== "all"
-              ? "Try adjusting your search query or status filter."
-              : "Get started by hosting your first collegiate hackathon."}
-          </p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-4">
-          {filtered.map((h) => {
-            const statusCfg = STATUS_CONFIG[h.status] || STATUS_CONFIG.draft;
-            return (
-              <div
-                key={h._id}
-                className="p-5 rounded-2xl border border-white/10 bg-slate-900/50 hover:border-white/20 transition flex flex-col lg:flex-row lg:items-center justify-between gap-5"
-              >
-                {/* Details */}
-                <div className="space-y-2 max-w-2xl">
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-semibold border ${statusCfg.bg} ${statusCfg.border} ${statusCfg.text}`}>
-                      {statusCfg.label}
-                    </span>
-                    <span className="text-xs uppercase tracking-wider text-slate-500 font-semibold px-2 py-0.5 rounded bg-white/5">
-                      {h.mode}
-                    </span>
-                    {h.college && (
-                      <span className="text-xs text-indigo-400 flex items-center gap-1 font-medium">
-                        <MapPin className="h-3 w-3" />
-                        {h.college?.name || h.college}
-                      </span>
-                    )}
-                  </div>
-
-                  <h3 className="text-lg font-bold text-white hover:text-indigo-400 transition">
-                    {h.title}
-                  </h3>
-
-                  <p className="text-sm text-slate-400 line-clamp-2">
-                    {h.description || "No description provided."}
-                  </p>
-
-                  <div className="flex items-center gap-4 text-xs text-slate-400 pt-1 flex-wrap">
-                    <span className="flex items-center gap-1">
-                      <Calendar className="h-3.5 w-3.5 text-slate-500" />
-                      Starts: {h.startDate ? new Date(h.startDate).toLocaleDateString() : "TBD"}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Clock className="h-3.5 w-3.5 text-slate-500" />
-                      Ends: {h.endDate ? new Date(h.endDate).toLocaleDateString() : "TBD"}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Users className="h-3.5 w-3.5 text-slate-500" />
-                      {h.registeredCount || 0} / {h.maxParticipants || "∞"} Registered
-                    </span>
-                    {h.room && (
-                      <span className="text-xs px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 flex items-center gap-1">
-                        <Layers className="h-3 w-3" />
-                        Room: {h.room?.visibility || "private"}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Actions */}
-                <div className="flex flex-col sm:flex-row lg:flex-col xl:flex-row items-stretch lg:items-end xl:items-center gap-2 pt-3 lg:pt-0 border-t lg:border-t-0 border-white/5">
-                  {/* Status Selector */}
-                  <select
-                    value={h.status}
-                    onChange={(e) => handleStatusChange(h._id, e.target.value)}
-                    className="bg-slate-950 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
-                  >
-                    {ALL_STATUSES.map(st => (
-                      <option key={st} value={st}>
-                        Status: {st.replace("_", " ")}
-                      </option>
-                    ))}
-                  </select>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleViewParticipants(h)}
-                      className="px-3 py-1.5 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-xs text-slate-300 flex items-center gap-1.5 transition"
-                      title="View Participants"
-                    >
-                      <Users className="h-3.5 w-3.5" />
-                      <span className="hidden sm:inline">Participants</span>
-                    </button>
-
-                    <button
-                      onClick={() => handleViewSubmissions(h)}
-                      className="px-3 py-1.5 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-xs text-slate-300 flex items-center gap-1.5 transition"
-                      title="View Submissions"
-                    >
-                      <FileText className="h-3.5 w-3.5" />
-                      <span className="hidden sm:inline">Submissions</span>
-                    </button>
-
-                    <button
-                      onClick={() => handleOpenEdit(h)}
-                      className="p-1.5 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition"
-                      title="Edit Hackathon"
-                    >
-                      <Edit2 className="h-4 w-4" />
-                    </button>
-
-                    <Link
-                      to={`/hackathon/${h._id}`}
-                      target="_blank"
-                      className="p-1.5 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-indigo-400 transition"
-                      title="Public View"
-                    >
-                      <ExternalLink className="h-4 w-4" />
-                    </Link>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* CREATE / EDIT MODAL */}
-      {isCreateOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
-          <div className="bg-slate-900 border border-white/10 rounded-2xl max-w-2xl w-full p-6 space-y-5 my-8 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-white/10 pb-4">
-              <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                <Trophy className="h-5 w-5 text-indigo-400" />
-                {editingHackathon ? "Edit Hackathon" : "Create New Hackathon"}
-              </h2>
-              <button
-                onClick={() => setIsCreateOpen(false)}
-                className="text-slate-400 hover:text-white text-xl"
-              >
-                &times;
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveHackathon} className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="sm:col-span-2">
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Hackathon Title *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.title}
-                    onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                    placeholder="e.g. Apex Collegiate Hack 2026"
-                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Slug (URL identifier)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.slug}
-                    onChange={(e) => setFormData({ ...formData, slug: e.target.value })}
-                    placeholder="e.g. apex-hack-2026 (auto-generated if empty)"
-                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    College Partner
-                  </label>
-                  <select
-                    value={formData.college}
-                    onChange={(e) => setFormData({ ...formData, college: e.target.value })}
-                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
-                  >
-                    <option value="">None / Open Platform Hackathon</option>
-                    {colleges.map((col) => (
-                      <option key={col._id} value={col._id}>
-                        {col.name} ({col.code})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Event Mode
-                  </label>
-                  <select
-                    value={formData.mode}
-                    onChange={(e) => setFormData({ ...formData, mode: e.target.value })}
-                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
-                  >
-                    <option value="online">Online</option>
-                    <option value="offline">In-Person (Offline)</option>
-                    <option value="hybrid">Hybrid</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Location / Venue
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.location}
-                    onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-                    placeholder="Campus Auditorium / Discord"
-                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Registration Start
-                  </label>
-                  <input
-                    type="datetime-local"
-                    value={formData.registrationStart}
-                    onChange={(e) => setFormData({ ...formData, registrationStart: e.target.value })}
-                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Registration Deadline
-                  </label>
-                  <input
-                    type="datetime-local"
-                    value={formData.registrationEnd}
-                    onChange={(e) => setFormData({ ...formData, registrationEnd: e.target.value })}
-                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Hackathon Start Time *
-                  </label>
-                  <input
-                    type="datetime-local"
-                    required
-                    value={formData.startDate}
-                    onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
-                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Hackathon End Time *
-                  </label>
-                  <input
-                    type="datetime-local"
-                    required
-                    value={formData.endDate}
-                    onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
-                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Participant Limit
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={formData.maxParticipants}
-                    onChange={(e) => setFormData({ ...formData, maxParticipants: e.target.value })}
-                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Tags (comma separated)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.tags}
-                    onChange={(e) => setFormData({ ...formData, tags: e.target.value })}
-                    placeholder="AI, Web3, EdTech, OpenSource"
-                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <div className="sm:col-span-2">
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Banner Image URL
-                  </label>
-                  <input
-                    type="url"
-                    value={formData.bannerImage}
-                    onChange={(e) => setFormData({ ...formData, bannerImage: e.target.value })}
-                    placeholder="https://images.unsplash.com/..."
-                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <div className="sm:col-span-2">
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Description *
-                  </label>
-                  <textarea
-                    rows={4}
-                    required
-                    value={formData.description}
-                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    placeholder="Describe problem statements, rules, eligibility, and expectations..."
-                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                {/* Prizes list */}
-                <div className="sm:col-span-2 space-y-2 pt-2 border-t border-white/10">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                      <Award className="h-4 w-4 text-amber-400" />
-                      Prize Pool
-                    </label>
-                    <button
-                      type="button"
-                      onClick={addPrizeRow}
-                      className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
-                    >
-                      <Plus className="h-3 w-3" /> Add Prize
-                    </button>
-                  </div>
-
-                  {formData.prizes.map((p, idx) => (
-                    <div key={idx} className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        placeholder="Title (1st, Best Design)"
-                        value={p.name}
-                        onChange={(e) => updatePrizeRow(idx, "name", e.target.value)}
-                        className="w-1/3 bg-slate-950 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white"
-                      />
-                      <input
-                        type="text"
-                        placeholder="Amount/Reward"
-                        value={p.amount}
-                        onChange={(e) => updatePrizeRow(idx, "amount", e.target.value)}
-                        className="w-1/3 bg-slate-950 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white"
-                      />
-                      <input
-                        type="text"
-                        placeholder="Short Note"
-                        value={p.description}
-                        onChange={(e) => updatePrizeRow(idx, "description", e.target.value)}
-                        className="flex-1 bg-slate-950 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white"
-                      />
-                      {formData.prizes.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => removePrizeRow(idx)}
-                          className="text-rose-400 hover:text-rose-300 text-sm px-1"
+      <div className="rounded-lg border border-border bg-card">
+        {loading ? (
+          <LoadingState label="Loading hackathons…" />
+        ) : visible.length === 0 ? (
+          <EmptyState
+            icon={Trophy}
+            title={hackathons.length ? "No hackathons match your filters" : "No hackathons yet"}
+            description={hackathons.length ? undefined : "Create the first hackathon to open registrations."}
+          />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-border bg-muted/40 text-xs text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-2.5 font-medium">Hackathon</th>
+                  <th className="px-4 py-2.5 font-medium">Registration</th>
+                  <th className="px-4 py-2.5 font-medium">Event</th>
+                  <th className="px-4 py-2.5 font-medium">Participants</th>
+                  <th className="px-4 py-2.5 font-medium">Status</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {visible.map((h) => (
+                  <tr key={h._id} className="align-top">
+                    <td className="px-4 py-3">
+                      <p className="font-medium text-foreground">{h.title}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {h.organizer} · {h.participationMode === "team" ? `Teams of up to ${h.maximumTeamSize}` : "Individual"}
+                        {h.visibility === "private" ? " · Private" : ""}
+                      </p>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">
+                      {h.registrationStartDate ? `${formatDate(h.registrationStartDate)} – ` : "Until "}
+                      {formatDate(h.registrationDeadline)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">
+                      {formatDate(h.startDate)} – {formatDate(h.endDate)}
+                    </td>
+                    <td className="px-4 py-3 text-xs tabular-nums">
+                      {h.participantCount}
+                      {h.maximumParticipants ? ` / ${h.maximumParticipants}` : ""}
+                      <span className="block text-muted-foreground">{h.submissionCount} submissions</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <StatusPill map={HACKATHON_STATUS} status={h.status} />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap items-center justify-end gap-1.5">
+                        <Select
+                          aria-label={`Change status of ${h.title}`}
+                          value={h.status}
+                          onChange={(e) => {
+                            setStatusError("");
+                            setStatusChange({ hackathon: h, status: e.target.value });
+                          }}
+                          className="h-7 w-auto text-xs"
                         >
-                          &times;
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-white/10">
-                <button
-                  type="button"
-                  onClick={() => setIsCreateOpen(false)}
-                  className="px-4 py-2 rounded-xl text-sm font-medium text-slate-400 hover:text-white"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm transition disabled:opacity-50"
-                >
-                  {submitting ? "Saving..." : editingHackathon ? "Update Hackathon" : "Create Hackathon"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* PARTICIPANTS MODAL */}
-      {participantsModal.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="bg-slate-900 border border-white/10 rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-2xl max-h-[85vh] flex flex-col">
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <div>
-                <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                  <Users className="h-5 w-5 text-indigo-400" />
-                  Registered Participants
-                </h3>
-                <p className="text-xs text-slate-400">
-                  {participantsModal.hackathon?.title} ({participantsModal.data.length} registered)
-                </p>
-              </div>
-              <button
-                onClick={() => setParticipantsModal({ open: false, hackathon: null, data: [], loading: false })}
-                className="text-slate-400 hover:text-white text-xl"
-              >
-                &times;
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-              {participantsModal.loading ? (
-                <div className="p-8 text-center text-slate-400">
-                  <RefreshCw className="h-5 w-5 animate-spin mx-auto mb-2 text-indigo-400" />
-                  Loading participants...
-                </div>
-              ) : participantsModal.data.length === 0 ? (
-                <div className="p-8 text-center text-slate-400 text-sm">
-                  No participants registered yet.
-                </div>
-              ) : (
-                participantsModal.data.map((reg) => (
-                  <div
-                    key={reg._id}
-                    className="p-3 rounded-xl border border-white/5 bg-slate-950/60 flex items-center justify-between text-xs"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="h-8 w-8 rounded-full bg-indigo-500/20 text-indigo-300 font-semibold flex items-center justify-center">
-                        {reg.user?.name?.[0]?.toUpperCase() || "U"}
-                      </div>
-                      <div>
-                        <div className="font-semibold text-white">{reg.user?.name || "Unknown"}</div>
-                        <div className="text-slate-400">@{reg.user?.username} • {reg.user?.email}</div>
-                      </div>
-                    </div>
-                    <div className="text-right text-slate-400">
-                      <div>Status: <span className="text-emerald-400 uppercase font-semibold">{reg.status}</span></div>
-                      <div className="text-[10px]">{new Date(reg.createdAt).toLocaleDateString()}</div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* SUBMISSIONS MODAL */}
-      {submissionsModal.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="bg-slate-900 border border-white/10 rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-2xl max-h-[85vh] flex flex-col">
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <div>
-                <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                  <FileText className="h-5 w-5 text-indigo-400" />
-                  Hackathon Submissions
-                </h3>
-                <p className="text-xs text-slate-400">
-                  {submissionsModal.hackathon?.title} ({submissionsModal.data.length} submitted)
-                </p>
-              </div>
-              <button
-                onClick={() => setSubmissionsModal({ open: false, hackathon: null, data: [], loading: false })}
-                className="text-slate-400 hover:text-white text-xl"
-              >
-                &times;
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-              {submissionsModal.loading ? (
-                <div className="p-8 text-center text-slate-400">
-                  <RefreshCw className="h-5 w-5 animate-spin mx-auto mb-2 text-indigo-400" />
-                  Loading submissions...
-                </div>
-              ) : submissionsModal.data.length === 0 ? (
-                <div className="p-8 text-center text-slate-400 text-sm">
-                  No projects submitted yet.
-                </div>
-              ) : (
-                submissionsModal.data.map((sub) => (
-                  <div
-                    key={sub._id}
-                    className="p-3.5 rounded-xl border border-white/5 bg-slate-950/60 flex items-center justify-between text-xs"
-                  >
-                    <div className="space-y-1">
-                      <div className="font-semibold text-white text-sm flex items-center gap-2">
-                        {sub.project?.title || "Untitled Project"}
-                        {sub.project?._id && (
-                          <Link
-                            to={`/projects/${sub.project._id}`}
-                            target="_blank"
-                            className="text-indigo-400 hover:text-indigo-300"
-                          >
-                            <ExternalLink className="h-3.5 w-3.5" />
+                          {Object.entries(HACKATHON_STATUS).map(([value, { label }]) => (
+                            <option key={value} value={value}>
+                              {label}
+                            </option>
+                          ))}
+                        </Select>
+                        <Button variant="outline" size="xs" onClick={() => openEdit(h)}>
+                          <Pencil className="h-3 w-3" aria-hidden="true" />
+                          Edit
+                        </Button>
+                        <Button variant="outline" size="xs" onClick={() => openParticipants(h)}>
+                          <Users className="h-3 w-3" aria-hidden="true" />
+                          Participants
+                        </Button>
+                        <Button asChild variant="outline" size="xs">
+                          <Link to={`/admin/submissions?hackathon=${h._id}`}>
+                            <ClipboardCheck className="h-3 w-3" aria-hidden="true" />
+                            Submissions
                           </Link>
-                        )}
+                        </Button>
+                        <Button asChild variant="ghost" size="xs" aria-label={`Open public page of ${h.title}`}>
+                          <Link to={`/hackathon/${h._id}`} target="_blank">
+                            <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                          </Link>
+                        </Button>
                       </div>
-                      <div className="text-slate-400">
-                        Submitted by: <span className="text-slate-200">{sub.submittedBy?.name || "Participant"}</span>
-                        {sub.teamMembers?.length > 0 && ` + ${sub.teamMembers.length} teammates`}
-                      </div>
-                      {sub.presentationUrl && (
-                        <a
-                          href={sub.presentationUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-indigo-400 hover:underline block"
-                        >
-                          Deck / Video: {sub.presentationUrl}
-                        </a>
-                      )}
-                    </div>
-                    <div className="text-right">
-                      <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                        {sub.status || "submitted"}
-                      </span>
-                      <div className="text-[10px] text-slate-500 mt-1">
-                        {new Date(sub.createdAt).toLocaleDateString()}
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </div>
-      )}
+        )}
+      </div>
+
+      {/* Create / edit */}
+      <Modal
+        open={formOpen}
+        onClose={saving ? () => {} : closeForm}
+        title={editing ? `Edit ${editing.title}` : "Create hackathon"}
+        description={editing ? undefined : "A private hackathon room is created automatically."}
+        wide
+      >
+        <form onSubmit={handleSave} className="space-y-4" noValidate>
+          {formError && <Alert tone="error">{formError}</Alert>}
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Title *" htmlFor="h-title" className="sm:col-span-2">
+              <Input id="h-title" value={form.title} onChange={setField("title")} required maxLength={120} />
+            </Field>
+            <Field label="Description *" htmlFor="h-description" className="sm:col-span-2">
+              <Textarea id="h-description" rows={4} value={form.description} onChange={setField("description")} required />
+            </Field>
+            <Field label="Theme" htmlFor="h-theme">
+              <Input id="h-theme" value={form.theme} onChange={setField("theme")} placeholder="Open Innovation" />
+            </Field>
+            <Field label="Organizer" htmlFor="h-organizer">
+              <Input id="h-organizer" value={form.organizer} onChange={setField("organizer")} placeholder="DevSpotlight" />
+            </Field>
+          </div>
+
+          <fieldset className="grid gap-3 rounded-md border border-border p-3 sm:grid-cols-2">
+            <legend className="px-1 text-xs font-semibold text-muted-foreground">Dates</legend>
+            <Field label="Registration start" htmlFor="h-reg-start" hint="Leave empty to open registration immediately.">
+              <Input id="h-reg-start" type="datetime-local" value={form.registrationStartDate} onChange={setField("registrationStartDate")} />
+            </Field>
+            <Field label="Registration end *" htmlFor="h-reg-end">
+              <Input id="h-reg-end" type="datetime-local" value={form.registrationDeadline} onChange={setField("registrationDeadline")} required />
+            </Field>
+            <Field label="Event start *" htmlFor="h-start">
+              <Input id="h-start" type="datetime-local" value={form.startDate} onChange={setField("startDate")} required />
+            </Field>
+            <Field label="Event end (submission deadline) *" htmlFor="h-end">
+              <Input id="h-end" type="datetime-local" value={form.endDate} onChange={setField("endDate")} required />
+            </Field>
+          </fieldset>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Eligibility" htmlFor="h-eligibility" className="sm:col-span-2">
+              <Textarea id="h-eligibility" rows={2} value={form.eligibility} onChange={setField("eligibility")} placeholder="e.g. Undergraduate students of participating colleges" />
+            </Field>
+            <Field label="Rules" htmlFor="h-rules" className="sm:col-span-2">
+              <Textarea id="h-rules" rows={4} value={form.rules} onChange={setField("rules")} placeholder="One rule per line" />
+            </Field>
+            <Field label="Participation" htmlFor="h-mode">
+              <Select id="h-mode" value={form.participationMode} onChange={setField("participationMode")}>
+                <option value="individual">Individual</option>
+                <option value="team">Team</option>
+              </Select>
+            </Field>
+            <Field label="Maximum team size" htmlFor="h-team-size">
+              <Input id="h-team-size" type="number" min={1} max={20} value={form.maximumTeamSize} onChange={setField("maximumTeamSize")} />
+            </Field>
+            <Field label="Maximum participants" htmlFor="h-max" hint="Leave empty for no limit.">
+              <Input id="h-max" type="number" min={1} value={form.maximumParticipants} onChange={setField("maximumParticipants")} />
+            </Field>
+            <Field label="Visibility" htmlFor="h-visibility" hint="Private hackathons are not listed publicly.">
+              <Select id="h-visibility" value={form.visibility} onChange={setField("visibility")}>
+                <option value="public">Public</option>
+                <option value="private">Private</option>
+              </Select>
+            </Field>
+            <Field label="Status" htmlFor="h-status">
+              <Select id="h-status" value={form.status} onChange={setField("status")}>
+                {Object.entries(HACKATHON_STATUS).map(([value, { label }]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+
+          {colleges.length > 0 && (
+            <fieldset className="rounded-md border border-border p-3">
+              <legend className="px-1 text-xs font-semibold text-muted-foreground">Participating colleges</legend>
+              <div className="grid max-h-40 gap-1.5 overflow-y-auto sm:grid-cols-2">
+                {colleges.map((c) => (
+                  <label key={c._id} className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={form.participatingColleges.includes(c._id)}
+                      onChange={() => toggleCollege(c._id)}
+                    />
+                    {c.name}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )}
+
+          <div className="flex justify-end gap-2 border-t border-border pt-3">
+            <Button type="button" variant="outline" size="sm" onClick={closeForm} disabled={saving}>
+              Cancel
+            </Button>
+            <Button type="submit" size="sm" disabled={saving}>
+              {saving ? "Saving…" : editing ? "Save changes" : "Create hackathon"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      <ConfirmDialog
+        open={Boolean(statusChange)}
+        title={`Change status to "${statusChange ? HACKATHON_STATUS[statusChange.status].label : ""}"?`}
+        description={
+          statusChange?.status === "completed"
+            ? "Completing the hackathon closes submissions. The room can then be published to the showcase."
+            : statusChange?.status === "cancelled"
+              ? "Cancelling closes registration and submissions."
+              : `"${statusChange?.hackathon.title}" will be updated for all participants.`
+        }
+        confirmLabel="Change status"
+        destructive={statusChange?.status === "cancelled"}
+        busy={statusBusy}
+        error={statusError}
+        onConfirm={confirmStatusChange}
+        onClose={() => setStatusChange(null)}
+      />
+
+      <Modal
+        open={Boolean(participantsFor)}
+        onClose={() => setParticipantsFor(null)}
+        title={`Participants · ${participantsFor?.title || ""}`}
+        wide
+      >
+        {participantsError && <Alert tone="error">{participantsError}</Alert>}
+        {participantsLoading ? (
+          <LoadingState label="Loading participants…" />
+        ) : participants.length === 0 && !participantsError ? (
+          <EmptyState icon={Users} title="No registrations yet" />
+        ) : (
+          <ul className="divide-y divide-border rounded-md border border-border">
+            {participants.map((r) => (
+              <li key={r._id} className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
+                <Avatar user={r.user} size="xs" />
+                <span className="font-medium">{r.user?.fullName || r.user?.userName || "Deleted user"}</span>
+                <span className="text-xs text-muted-foreground">{r.user?.email}</span>
+                <span className="ml-auto text-xs text-muted-foreground">
+                  {r.teamName ? `Team ${r.teamName} · ` : ""}
+                  {r.college?.name || r.user?.collegeName || "No college"} · {r.status} · {formatDate(r.registeredAt)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Modal>
     </div>
   );
 }

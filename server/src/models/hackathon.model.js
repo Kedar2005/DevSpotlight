@@ -53,9 +53,24 @@ const hackathonSchema = new Schema(
       type: Date,
       required: true,
     },
+    // Optional: when null, registration opens as soon as the hackathon is listed.
+    registrationStartDate: {
+      type: Date,
+      default: null,
+    },
     registrationDeadline: {
       type: Date,
       required: true,
+    },
+    eligibility: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    rules: {
+      type: String,
+      trim: true,
+      default: "",
     },
     status: {
       type: String,
@@ -94,6 +109,16 @@ const hackathonSchema = new Schema(
   },
   { timestamps: true }
 );
+
+/**
+ * Registration window check shared by the public API and the register endpoint.
+ * Works on lean objects too, so it is a plain function rather than a schema method.
+ */
+export const isRegistrationOpen = (hackathon, now = new Date()) =>
+  hackathon.visibility === "public" &&
+  !["draft", "completed", "cancelled"].includes(hackathon.status) &&
+  (!hackathon.registrationStartDate || now >= new Date(hackathon.registrationStartDate)) &&
+  now <= new Date(hackathon.registrationDeadline);
 
 hackathonSchema.index({ status: 1, startDate: 1 });
 hackathonSchema.index({ visibility: 1, status: 1 });

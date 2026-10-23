@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   GraduationCap,
   Plus,
@@ -20,6 +21,7 @@ import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Alert } from "../../components/ui/alert";
 import { Modal } from "../../components/ui/modal";
+import { ConfirmDialog } from "../../components/shared/PageState";
 
 export function AdminColleges() {
   const [colleges, setColleges] = useState([]);
@@ -42,6 +44,9 @@ export function AdminColleges() {
   const [formError, setFormError] = useState("");
 
   const [reloadKey, setReloadKey] = useState(0);
+  const [statusTarget, setStatusTarget] = useState(null);
+  const [statusBusy, setStatusBusy] = useState(false);
+  const [statusError, setStatusError] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -64,6 +69,8 @@ export function AdminColleges() {
     return () => {
       active = false;
     };
+    // searchQuery is applied on submit (reloadKey), not on every keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reloadKey]);
 
   const fetchColleges = () => {
@@ -124,14 +131,20 @@ export function AdminColleges() {
     }
   };
 
-  const handleToggleStatus = async (college) => {
+  const handleToggleStatus = async () => {
+    const college = statusTarget;
     const nextStatus = college.status === "active" ? "inactive" : "active";
+    setStatusBusy(true);
+    setStatusError("");
     try {
       await updateCollegeStatus(college._id, nextStatus);
       setActionSuccess(`College "${college.name}" marked as ${nextStatus}.`);
+      setStatusTarget(null);
       fetchColleges();
     } catch (err) {
-      setError(getErrorMessage(err, "Failed to update college status."));
+      setStatusError(getErrorMessage(err, "Failed to update college status."));
+    } finally {
+      setStatusBusy(false);
     }
   };
 
@@ -141,10 +154,10 @@ export function AdminColleges() {
       <div className="flex flex-col gap-2 border-b border-border pb-5 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">
-            College Management
+            Colleges
           </h1>
           <p className="mt-1 text-xs sm:text-sm text-muted-foreground">
-            Manage partner engineering universities, colleges, and campus hackathon affiliations.
+            Registered colleges, their students, and activation status.
           </p>
         </div>
 
@@ -211,6 +224,7 @@ export function AdminColleges() {
                   <th className="px-4 py-3">Code</th>
                   <th className="px-4 py-3">College Name</th>
                   <th className="px-4 py-3">Location</th>
+                  <th className="px-4 py-3">Students</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
@@ -235,6 +249,7 @@ export function AdminColleges() {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{c.location || "—"}</td>
+                    <td className="px-4 py-3 tabular-nums">{c.studentCount ?? 0}</td>
                     <td className="px-4 py-3">
                       {c.status === "active" ? (
                         <span className="inline-flex items-center gap-1 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-2 py-0.5 text-[10px] font-semibold border border-emerald-500/20">
@@ -248,6 +263,9 @@ export function AdminColleges() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-1.5">
+                        <Button asChild variant="outline" size="xs">
+                          <Link to={`/admin/students?college=${c._id}`}>Students</Link>
+                        </Button>
                         <Button
                           variant="outline"
                           size="xs"
@@ -259,7 +277,10 @@ export function AdminColleges() {
                         <Button
                           variant={c.status === "active" ? "outline" : "default"}
                           size="xs"
-                          onClick={() => handleToggleStatus(c)}
+                          onClick={() => {
+                            setStatusError("");
+                            setStatusTarget(c);
+                          }}
                         >
                           {c.status === "active" ? "Deactivate" : "Activate"}
                         </Button>
@@ -272,6 +293,22 @@ export function AdminColleges() {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={Boolean(statusTarget)}
+        title={statusTarget?.status === "active" ? `Deactivate ${statusTarget?.name}?` : `Activate ${statusTarget?.name}?`}
+        description={
+          statusTarget?.status === "active"
+            ? "Inactive colleges are hidden from registration and profile college lists. Existing students keep their accounts."
+            : "The college will appear again in registration and profile college lists."
+        }
+        confirmLabel={statusTarget?.status === "active" ? "Deactivate" : "Activate"}
+        destructive={statusTarget?.status === "active"}
+        busy={statusBusy}
+        error={statusError}
+        onConfirm={handleToggleStatus}
+        onClose={() => setStatusTarget(null)}
+      />
 
       {/* Add / Edit College Modal */}
       <Modal

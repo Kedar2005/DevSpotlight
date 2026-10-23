@@ -17,7 +17,7 @@ import {
   Send,
 } from "lucide-react";
 import { getMyProjects } from "../api/project.api";
-import { getTeammateRecommendations } from "../api/recommendation.api";
+import { getTeammateRecommendations, getAiTeammateRecommendations } from "../api/recommendation.api";
 import { sendCollaborationRequest } from "../api/collaboration.api";
 import { getErrorMessage } from "../lib/errors";
 import { Avatar } from "../components/ui/avatar";
@@ -29,6 +29,38 @@ import { Alert } from "../components/ui/alert";
 import { Card, CardContent } from "../components/ui/card";
 import { Modal } from "../components/ui/modal";
 import { Textarea } from "../components/ui/textarea";
+import { LoadingState, EmptyState } from "../components/shared/PageState";
+
+// Request button for a recommended student; pending/approved states block duplicates.
+function RequestActions({ student, onRequest }) {
+  return (
+    <div className="flex items-center gap-2 ml-auto">
+      {student.collaborationStatus === "pending" ? (
+        <Button variant="secondary" size="sm" disabled className="text-xs font-medium cursor-not-allowed">
+          <Clock className="mr-1.5 h-3.5 w-3.5" />
+          Request Pending
+        </Button>
+      ) : student.collaborationStatus === "approved" ? (
+        <Button variant="secondary" size="sm" disabled className="text-xs font-medium cursor-not-allowed">
+          <Check className="mr-1.5 h-3.5 w-3.5 text-success" />
+          Collaborator
+        </Button>
+      ) : (
+        <Button size="sm" onClick={() => onRequest(student)} className="text-xs font-medium">
+          <UserPlus className="mr-1.5 h-3.5 w-3.5" />
+          {student.collaborationStatus === "rejected" ? "Request Again" : "Request Collaboration"}
+        </Button>
+      )}
+
+      <Button asChild variant="outline" size="sm">
+        <Link to={`/u/${student.userName}`}>
+          View Profile
+          <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+        </Link>
+      </Button>
+    </div>
+  );
+}
 
 export function FindTeammates() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -52,6 +84,33 @@ export function FindTeammates() {
   const [inviteError, setInviteError] = useState("");
   const [actionSuccess, setActionSuccess] = useState("");
   const [actionError, setActionError] = useState("");
+
+  // AI recommendations: fetched only when the owner clicks Generate/Refresh.
+  const [aiData, setAiData] = useState(null);
+  const [loadingAi, setLoadingAi] = useState(false);
+  const [aiError, setAiError] = useState("");
+
+  const handleGenerateAi = async () => {
+    setLoadingAi(true);
+    setAiError("");
+    try {
+      setAiData(await getAiTeammateRecommendations(selectedProjectId));
+    } catch (err) {
+      setAiError(getErrorMessage(err, "Couldn't generate AI recommendations."));
+    } finally {
+      setLoadingAi(false);
+    }
+  };
+
+  // Keep a student's request status in sync on both the skill-based and AI lists.
+  const markStudent = (studentId, changes) => {
+    const update = (prev) =>
+      prev?.recommendations
+        ? { ...prev, recommendations: prev.recommendations.map((item) => (item._id === studentId ? { ...item, ...changes } : item)) }
+        : prev;
+    setRecommendationData(update);
+    setAiData(update);
+  };
 
   const handleOpenInviteModal = (student) => {
     setTargetStudent(student);
@@ -83,22 +142,7 @@ export function FindTeammates() {
       );
 
       // Immediately update student's status on card without refreshing page
-      setRecommendationData((prev) => {
-        if (!prev || !prev.recommendations) return prev;
-        return {
-          ...prev,
-          recommendations: prev.recommendations.map((item) => {
-            if (item._id === targetStudent._id) {
-              return {
-                ...item,
-                collaborationStatus: "pending",
-                collaborationRequest: savedRequest,
-              };
-            }
-            return item;
-          }),
-        };
-      });
+      markStudent(targetStudent._id, { collaborationStatus: "pending", collaborationRequest: savedRequest });
 
       const studentName = targetStudent.fullName || `@${targetStudent.userName}`;
       const projectTitle = selectedProject?.title || "your project";
@@ -115,21 +159,7 @@ export function FindTeammates() {
       if (err.response?.status === 409) {
         const errorDetail = err.response?.data?.message || "";
         const isApproved = errorDetail.toLowerCase().includes("already a collaborator");
-        setRecommendationData((prev) => {
-          if (!prev || !prev.recommendations) return prev;
-          return {
-            ...prev,
-            recommendations: prev.recommendations.map((item) => {
-              if (item._id === targetStudent._id) {
-                return {
-                  ...item,
-                  collaborationStatus: isApproved ? "approved" : "pending",
-                };
-              }
-              return item;
-            }),
-          };
-        });
+        markStudent(targetStudent._id, { collaborationStatus: isApproved ? "approved" : "pending" });
       }
     } finally {
       setSendingInvite(false);
@@ -170,6 +200,8 @@ export function FindTeammates() {
     setSearchParams(projectId ? { projectId } : {});
     setLoadingRecs(Boolean(projectId));
     setRecsError("");
+    setAiData(null);
+    setAiError("");
     if (!projectId) {
       setRecommendationData(null);
     }
@@ -225,7 +257,7 @@ export function FindTeammates() {
         <div>
           <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary mb-2">
             <Sparkles className="h-3.5 w-3.5" />
-            <span>AI Teammate Recommendation</span>
+            <span>Teammate recommendations: skill match + optional AI</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
             Find Teammates
@@ -372,6 +404,133 @@ export function FindTeammates() {
                 </div>
               )}
             </div>
+          )}
+
+          {/* AI Recommendations (Gemini), generated on demand */}
+          {selectedProject && (
+            <Card className="border-border bg-card">
+              <CardContent className="p-5 space-y-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="flex items-center gap-1.5 text-base font-semibold text-foreground">
+                      <Sparkles className="h-4 w-4 text-primary" />
+                      AI Recommendations
+                    </h2>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      Gemini reads the project and eligible students&apos; skills, bios and public projects, then explains who fits. Emails and messages are never sent.
+                    </p>
+                  </div>
+                  <Button size="sm" onClick={handleGenerateAi} disabled={loadingAi} className="shrink-0">
+                    <RotateCw className={`mr-1.5 h-3.5 w-3.5 ${loadingAi ? "animate-spin" : ""}`} />
+                    {aiData ? "Refresh" : "Generate"}
+                  </Button>
+                </div>
+
+                {aiError && <Alert tone="error">{aiError}</Alert>}
+
+                {loadingAi ? (
+                  <LoadingState label="Asking Gemini to analyse eligible students…" />
+                ) : aiData?.source === "unavailable" ? (
+                  <Alert tone="error">
+                    {aiData.message} The skill-based matches below are not AI-generated and are still available.
+                  </Alert>
+                ) : aiData?.source === "none" ? (
+                  <EmptyState icon={Users} title="No eligible students" description={aiData.message} />
+                ) : aiData?.source === "gemini" && aiData.recommendations.length === 0 ? (
+                  <EmptyState
+                    icon={Users}
+                    title="No strong AI matches"
+                    description="Gemini found no relevant candidate among eligible students. Try adding more detail or skills to the project."
+                  />
+                ) : aiData?.source === "gemini" ? (
+                  <div className="space-y-3">
+                    <p className="text-xs text-muted-foreground">
+                      {aiData.recommendations.length} suggested from {aiData.candidatesAnalysed} eligible students · model {aiData.model}
+                      {aiData.cached ? " · cached result" : ""}
+                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {aiData.recommendations.map((student) => (
+                        <div key={student._id} className="flex flex-col gap-3 rounded-lg border border-border p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <Link to={`/u/${student.userName}`} className="flex items-start gap-3 group">
+                              <Avatar user={student} size="md" />
+                              <div className="space-y-0.5">
+                                <h3 className="text-sm font-semibold text-foreground group-hover:text-primary leading-tight">
+                                  {student.fullName || `@${student.userName}`}
+                                </h3>
+                                <p className="font-code text-xs text-muted-foreground">@{student.userName}</p>
+                              </div>
+                            </Link>
+                            <div className="flex flex-col items-end gap-1 shrink-0 text-xs">
+                              <Badge variant="default" title="How relevant Gemini judged this student to the project. Not a probability.">
+                                AI relevance {student.aiScore}/100
+                              </Badge>
+                              <span className="font-code text-muted-foreground">{student.matchPercentage}% skill match</span>
+                            </div>
+                          </div>
+
+                          {student.reasons.length > 0 && (
+                            <ul className="list-disc space-y-1 pl-4 text-xs text-foreground/80">
+                              {student.reasons.map((reason) => (
+                                <li key={reason}>{reason}</li>
+                              ))}
+                            </ul>
+                          )}
+
+                          {student.potentialContribution && (
+                            <p className="text-xs text-foreground/80">
+                              <span className="font-semibold text-foreground">Could contribute: </span>
+                              {student.potentialContribution}
+                            </p>
+                          )}
+
+                          <div className="space-y-2 border-t border-border/60 pt-2">
+                            <div>
+                              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                Matching required skills ({student.matchingSkills.length})
+                              </p>
+                              {student.matchingSkills.length > 0 ? (
+                                <div className="flex flex-wrap gap-1">
+                                  {student.matchingSkills.map((skill) => (
+                                    <Badge key={skill} variant="success" className="font-code text-[11px] py-0 px-1.5">
+                                      {skill}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-[11px] italic text-muted-foreground">None of the listed required skills</p>
+                              )}
+                            </div>
+                            {student.complementarySkills.length > 0 && (
+                              <div>
+                                <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                  Complementary skills the team lacks
+                                </p>
+                                <div className="flex flex-wrap gap-1">
+                                  {student.complementarySkills.map((skill) => (
+                                    <Badge key={skill} variant="tech" className="text-[11px] py-0 px-1.5">
+                                      {skill}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="mt-auto flex items-center border-t border-border pt-3">
+                            <RequestActions student={student} onRequest={handleOpenInviteModal} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Click Generate to get AI suggestions. The skill-based matches below are calculated without AI.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
           )}
 
           {/* Error Message */}
@@ -654,48 +813,7 @@ export function FindTeammates() {
                             </div>
 
                             {/* Buttons: Request Collaboration & View Profile */}
-                            <div className="flex items-center gap-2 ml-auto">
-                              {student.collaborationStatus === "pending" ? (
-                                <Button
-                                  variant="secondary"
-                                  size="sm"
-                                  disabled
-                                  className="text-xs font-medium cursor-not-allowed"
-                                >
-                                  <Clock className="mr-1.5 h-3.5 w-3.5" />
-                                  Request Pending
-                                </Button>
-                              ) : student.collaborationStatus === "approved" ? (
-                                <Button
-                                  variant="secondary"
-                                  size="sm"
-                                  disabled
-                                  className="text-xs font-medium cursor-not-allowed"
-                                >
-                                  <Check className="mr-1.5 h-3.5 w-3.5 text-success" />
-                                  Collaborator
-                                </Button>
-                              ) : (
-                                <Button
-                                  size="sm"
-                                  onClick={() => handleOpenInviteModal(student)}
-                                  className="text-xs font-medium"
-                                >
-                                  <UserPlus className="mr-1.5 h-3.5 w-3.5" />
-                                  {student.collaborationStatus === "rejected"
-                                    ? "Request Again"
-                                    : "Request Collaboration"}
-                                </Button>
-                              )}
-
-                              {/* View Profile Action */}
-                              <Button asChild variant="outline" size="sm">
-                                <Link to={`/u/${student.userName}`}>
-                                  View Profile
-                                  <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
-                                </Link>
-                              </Button>
-                            </div>
+                            <RequestActions student={student} onRequest={handleOpenInviteModal} />
                           </div>
                         </CardContent>
                       </Card>

@@ -7,6 +7,7 @@ import {
   getUserProjects,
   getAdminProjects,
   moderateProject,
+  getAdminProjectDetails,
   getAdminColleges,
   createCollege,
   updateCollege,
@@ -20,6 +21,9 @@ import {
   getAdminRooms,
   publishRoom,
   unpublishRoom,
+  setRoomArchived,
+  getAdminSubmissions,
+  updateSubmissionStatus,
   getAdminReports,
 } from "../controllers/admin.controller.js";
 
@@ -39,6 +43,7 @@ router.route("/users/:userId/projects").get(getUserProjects);
 
 // Project moderation
 router.route("/projects").get(getAdminProjects);
+router.route("/projects/:projectId").get(getAdminProjectDetails);
 router.route("/projects/:projectId/moderation").patch(moderateProject);
 
 // College management
@@ -57,5 +62,10 @@ router.route("/hackathons/:hackathonId/submissions").get(getHackathonSubmissions
 router.route("/rooms").get(getAdminRooms);
 router.route("/rooms/:roomId/publish").patch(publishRoom);
 router.route("/rooms/:roomId/unpublish").patch(unpublishRoom);
+router.route("/rooms/:roomId/archive").patch(setRoomArchived);
+
+// Hackathon submission review
+router.route("/submissions").get(getAdminSubmissions);
+router.route("/submissions/:submissionId/status").patch(updateSubmissionStatus);
 
 export default router;

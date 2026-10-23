@@ -99,3 +99,23 @@ export const getAdminReports = async () => {
   const { data } = await http.get("/admin/reports");
   return data.data;
 };
+
+export const getAdminProjectDetails = async (projectId) => {
+  const { data } = await http.get(`/admin/projects/${projectId}`);
+  return data.data;
+};
+
+export const setRoomArchived = async (roomId, archived) => {
+  const { data } = await http.patch(`/admin/rooms/${roomId}/archive`, { archived });
+  return data.data;
+};
+
+export const getAdminSubmissions = async (params = {}) => {
+  const { data } = await http.get("/admin/submissions", { params });
+  return data.data;
+};
+
+export const updateSubmissionStatus = async (submissionId, status) => {
+  const { data } = await http.patch(`/admin/submissions/${submissionId}/status`, { status });
+  return data.data;
+};

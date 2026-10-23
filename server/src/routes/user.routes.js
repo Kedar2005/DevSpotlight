@@ -5,7 +5,6 @@ import {
   changeCurrentPassword,
   removeUserAvatar,
   removeUserCoverImage,
-  deleteProfile,
   getMyProfile,
   getMyProjects,
   getMyFavoriteProjects,
@@ -35,7 +34,6 @@ router.route("/change-password").patch(verifyJWT, changeCurrentPassword);
 
 router.route("/remove-avatar").delete(verifyJWT, removeUserAvatar);
 router.route("/remove-cover").delete(verifyJWT, removeUserCoverImage);
-router.route("/delete-profile").delete(deleteProfile);
 router.route("/my-profile").get(verifyJWT, getMyProfile);
 router.route("/my-projects").get(verifyJWT, getMyProjects);
 router.route("/my-favourites").get(verifyJWT, getMyFavoriteProjects);

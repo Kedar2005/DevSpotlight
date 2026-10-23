@@ -8,7 +8,15 @@ import {
   ShieldCheck,
   RotateCw,
 } from "lucide-react";
-import { getAdminProjects, moderateProject } from "../../api/admin.api";
+import {
+  getAdminProjects,
+  moderateProject,
+  getAdminColleges,
+  getAdminProjectDetails,
+} from "../../api/admin.api";
+import { SUBMISSION_STATUS, formatDate } from "../../lib/hackathon";
+import { PROJECT_CATEGORIES } from "../../lib/constants";
+import { LoadingState, StatusPill } from "../../components/shared/PageState";
 import { getErrorMessage } from "../../lib/errors";
 import { Avatar } from "../../components/ui/avatar";
 import { Badge } from "../../components/ui/badge";
@@ -18,17 +26,6 @@ import { Select } from "../../components/ui/select";
 import { Alert } from "../../components/ui/alert";
 import { Modal } from "../../components/ui/modal";
 
-const PROJECT_CATEGORIES = [
-  "Web app",
-  "Mobile app",
-  "AI / ML",
-  "Game",
-  "Data",
-  "Developer tool",
-  "Hardware / IoT",
-  "Open source",
-  "Other",
-];
 
 const categories = ["All", ...PROJECT_CATEGORIES];
 
@@ -46,6 +43,32 @@ export function AdminProjects() {
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [collegeFilter, setCollegeFilter] = useState("all");
+  const [colleges, setColleges] = useState([]);
+
+  // Details modal
+  const [details, setDetails] = useState(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsError, setDetailsError] = useState("");
+
+  useEffect(() => {
+    getAdminColleges()
+      .then((data) => setColleges(data || []))
+      .catch(() => setColleges([]));
+  }, []);
+
+  const openDetails = async (project) => {
+    setDetails({ ...project, loadedTeam: false });
+    setDetailsError("");
+    setDetailsLoading(true);
+    try {
+      setDetails({ ...(await getAdminProjectDetails(project._id)), loadedTeam: true });
+    } catch (err) {
+      setDetailsError(getErrorMessage(err, "Failed to load project details."));
+    } finally {
+      setDetailsLoading(false);
+    }
+  };
 
   // Moderation Modal
   const [moderatingProject, setModeratingProject] = useState(null);
@@ -62,6 +85,7 @@ export function AdminProjects() {
       q: searchQuery.trim() || undefined,
       category: categoryFilter !== "All" ? categoryFilter : undefined,
       status: statusFilter !== "all" ? statusFilter : undefined,
+      college: collegeFilter !== "all" ? collegeFilter : undefined,
     })
       .then((data) => {
         if (!active) return;
@@ -82,7 +106,9 @@ export function AdminProjects() {
     return () => {
       active = false;
     };
-  }, [page, categoryFilter, statusFilter, reloadKey]);
+    // searchQuery is applied on submit (reloadKey), not on every keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, categoryFilter, statusFilter, collegeFilter, reloadKey]);
 
   const fetchProjects = () => {
     setLoading(true);
@@ -134,10 +160,10 @@ export function AdminProjects() {
       <div className="flex flex-col gap-2 border-b border-border pb-5 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">
-            Project Moderation
+            Projects
           </h1>
           <p className="mt-1 text-xs sm:text-sm text-muted-foreground">
-            Review submitted student projects, inspect codebase links, and soft-delete abusive or spam builds.
+            Search projects by name or owner, view teams, and hide or restore projects.
           </p>
         </div>
 
@@ -167,7 +193,7 @@ export function AdminProjects() {
           <div className="relative w-full">
             <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
             <Input
-              placeholder="Search by project title or description…"
+              placeholder="Search by project name or owner…"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-8 h-8 text-xs bg-background"
@@ -178,8 +204,9 @@ export function AdminProjects() {
           </Button>
         </form>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Select
+            aria-label="Filter by category"
             value={categoryFilter}
             onChange={(e) => {
               setCategoryFilter(e.target.value);
@@ -195,6 +222,7 @@ export function AdminProjects() {
           </Select>
 
           <Select
+            aria-label="Filter by status"
             value={statusFilter}
             onChange={(e) => {
               setStatusFilter(e.target.value);
@@ -205,6 +233,23 @@ export function AdminProjects() {
             <option value="all">All Status</option>
             <option value="active">Active</option>
             <option value="moderated">Moderated</option>
+          </Select>
+
+          <Select
+            aria-label="Filter by college"
+            value={collegeFilter}
+            onChange={(e) => {
+              setCollegeFilter(e.target.value);
+              setPage(1);
+            }}
+            className="h-8 text-xs w-40 bg-background"
+          >
+            <option value="all">All Colleges</option>
+            {colleges.map((c) => (
+              <option key={c._id} value={c._id}>
+                {c.name}
+              </option>
+            ))}
           </Select>
         </div>
       </div>
@@ -289,11 +334,9 @@ export function AdminProjects() {
                     {/* Actions */}
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-1.5">
-                        <Button asChild variant="outline" size="xs">
-                          <Link to={`/project/${p._id}`} target="_blank">
-                            <Eye className="mr-1 h-3 w-3" />
-                            View
-                          </Link>
+                        <Button variant="outline" size="xs" onClick={() => openDetails(p)}>
+                          <Eye className="mr-1 h-3 w-3" />
+                          Details
                         </Button>
 
                         <Button
@@ -344,6 +387,83 @@ export function AdminProjects() {
           </div>
         )}
       </div>
+
+      {/* Project Details Modal */}
+      <Modal
+        open={Boolean(details)}
+        onClose={() => setDetails(null)}
+        title={details?.title || "Project"}
+        description={details?.category}
+        wide
+      >
+        <div className="space-y-4 text-sm">
+          {detailsError && <Alert tone="error">{detailsError}</Alert>}
+          <p className="whitespace-pre-line text-muted-foreground">{details?.description}</p>
+          {details?.techStack?.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {details.techStack.map((t) => (
+                <Badge key={t} variant="tech">{t}</Badge>
+              ))}
+            </div>
+          )}
+          <div className="flex flex-wrap gap-3 text-xs">
+            {details?.githubLink && (
+              <a className="text-primary hover:underline" href={details.githubLink} target="_blank" rel="noreferrer">
+                Repository
+              </a>
+            )}
+            {details?.liveLink && (
+              <a className="text-primary hover:underline" href={details.liveLink} target="_blank" rel="noreferrer">
+                Live demo
+              </a>
+            )}
+            {details && !details.isDeleted && (
+              <Link className="text-primary hover:underline" to={`/project/${details._id}`} target="_blank">
+                Public page
+              </Link>
+            )}
+          </div>
+
+          {detailsLoading ? (
+            <LoadingState label="Loading team…" />
+          ) : details?.loadedTeam ? (
+            <>
+              <div>
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Team</h3>
+                <ul className="divide-y divide-border rounded-md border border-border">
+                  {[{ ...details.userId, owner: true }, ...(details.teamMembers || [])].map((m) => (
+                    <li key={m._id} className="flex items-center gap-2 px-3 py-2">
+                      <Avatar user={m} size="xs" />
+                      <span className="font-medium">{m.fullName || m.userName}</span>
+                      <span className="text-xs text-muted-foreground">@{m.userName}</span>
+                      {m.owner && <Badge variant="secondary" className="ml-auto">Owner</Badge>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Hackathon submissions
+                </h3>
+                {details.hackathonSubmissions?.length ? (
+                  <ul className="space-y-1">
+                    {details.hackathonSubmissions.map((s) => (
+                      <li key={s._id} className="flex items-center justify-between gap-2 text-xs">
+                        <span>
+                          {s.hackathon?.title || "Hackathon"} · {formatDate(s.submittedAt)}
+                        </span>
+                        <StatusPill map={SUBMISSION_STATUS} status={s.status} />
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Not submitted to any hackathon.</p>
+                )}
+              </div>
+            </>
+          ) : null}
+        </div>
+      </Modal>
 
       {/* Moderation Confirmation Modal */}
       <Modal

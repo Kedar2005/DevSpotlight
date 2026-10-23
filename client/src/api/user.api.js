@@ -14,3 +14,9 @@ export const getMyCollaborations = async () => {
   const { data } = await http.get("/users/my-contributions");
   return data.data;
 };
+
+// Returns fresh tokens for this session; older sessions are signed out by the server.
+export const changePassword = async (payload) => {
+  const { data } = await http.patch("/users/change-password", payload);
+  return data;
+};

@@ -4,7 +4,12 @@ import { asyncHandler } from "../utils/asyncHandlers.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import { ApiError } from "../utils/apiError.js";
 import { User } from "../models/user.model.js";
-import { isValidEmail } from "../utils/validators.js";
+import {
+  isValidEmail,
+  isValidUsername,
+  isValidPassword,
+  PASSWORD_MIN_LENGTH,
+} from "../utils/validators.js";
 import { isMailConfigured, sendPasswordResetEmail } from "../utils/mailer.js";
 
 const sanitizeUser = (user) => ({
@@ -54,8 +59,23 @@ const registerUser = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Username, full name, email, and password are required");
   }
 
+  const normalizedUserName = userName.trim().toLowerCase();
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!isValidUsername(normalizedUserName)) {
+    throw new ApiError(
+      400,
+      "Username must be 3–30 characters: lowercase letters, numbers, underscores or periods"
+    );
+  }
+  if (!isValidEmail(normalizedEmail)) {
+    throw new ApiError(400, "Enter a valid email address");
+  }
+  if (!isValidPassword(password)) {
+    throw new ApiError(400, `Password must be at least ${PASSWORD_MIN_LENGTH} characters`);
+  }
+
   const existingUser = await User.findOne({
-    $or: [{ userName: userName.toLowerCase() }, { email: email.toLowerCase() }],
+    $or: [{ userName: normalizedUserName }, { email: normalizedEmail }],
   });
 
   if (existingUser) {
@@ -64,9 +84,9 @@ const registerUser = asyncHandler(async (req, res) => {
 
   //create user
   const registeredUser = await User.create({
-    userName,
+    userName: normalizedUserName,
     fullName,
-    email,
+    email: normalizedEmail,
     password,
     bio: bio?.trim() || undefined,
     avatar: avatar?.trim() || undefined,
@@ -101,19 +121,15 @@ const registerUser = asyncHandler(async (req, res) => {
 const loginUser = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
-  if (!email || !password?.trim()) {
+  if (typeof email !== "string" || !email.trim() || typeof password !== "string" || !password.trim()) {
     throw new ApiError(400, "Email and password are required");
   }
 
-  const user = await User.findOne({ email: email.toLowerCase() });
+  const user = await User.findOne({ email: email.trim().toLowerCase() });
 
-  if (!user) {
-    throw new ApiError(404, "User not found");
-  }
-
-  const isPasswordCorrect = await user.isPasswordCorrect(password);
-  if (!isPasswordCorrect) {
-    throw new ApiError(400, "Invalid credentials");
+  // Same answer for an unknown email and a wrong password, so login can't reveal who has an account.
+  if (!user || !(await user.isPasswordCorrect(password))) {
+    throw new ApiError(401, "Invalid email or password");
   }
 
   if (user.isSuspended || user.isBanned) {
@@ -324,7 +340,7 @@ const resetPassword = asyncHandler(async (req, res) => {
   if (typeof token !== "string" || !/^[a-f0-9]{64}$/i.test(token.trim())) {
     throw invalidLink;
   }
-  if (typeof password !== "string" || password.length < 8) {
+  if (!isValidPassword(password)) {
     throw new ApiError(400, "Password must be at least 8 characters");
   }
   if (Buffer.byteLength(password) > 72) {
@@ -362,7 +378,7 @@ const resetPassword = asyncHandler(async (req, res) => {
 const getCurrentUser = asyncHandler(async (req, res) => {
   return res
     .status(200)
-    .json(new ApiResponse(200, req.user, "Current user fetched successfully"));
+    .json(new ApiResponse(200, sanitizeUser(req.user), "Current user fetched successfully"));
 });
 
 export {

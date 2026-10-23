@@ -11,6 +11,7 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
 import { Alert } from "../components/ui/alert";
+import { ChangePasswordForm } from "../components/shared/ChangePasswordForm";
 
 export function Profile() {
   const { user, updateUser } = useAuth();
@@ -246,6 +247,8 @@ export function Profile() {
               </div>
             </form>
           )}
+
+          <ChangePasswordForm />
         </div>
 
         {/* Right Column: User's Projects & Collaboration Activity */}

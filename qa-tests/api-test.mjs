@@ -47,7 +47,7 @@ ok("reset with valid token -> 200", r.status === 200, JSON.stringify(r));
 r = await call("POST", "/auth/reset-password", { body: { token: resetToken, password: "another-pass1" } });
 ok("token cannot be reused -> 400", r.status === 400);
 r = await call("POST", "/auth/login", { body: { email: A.email, password: A.password } });
-ok("old password rejected", r.status === 400);
+ok("old password rejected", r.status === 401);
 r = await call("POST", "/auth/login", { body: { email: A.email, password: "newpassword1" } });
 ok("login with new password -> 200", r.status === 200);
 const newTokenA = r.data?.accessToken;

@@ -49,3 +49,11 @@ export const escapeRegex = (value) => `${value}`.replace(/[.*+?^${}()|[\]\\]/g, 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export const isValidEmail = (value) =>
   typeof value === "string" && value.length <= 254 && EMAIL_PATTERN.test(value);
+
+// New usernames only; a few older accounts predate this rule and keep their names.
+const USERNAME_PATTERN = /^[a-z0-9_.]{3,30}$/;
+export const isValidUsername = (value) => typeof value === "string" && USERNAME_PATTERN.test(value);
+
+export const PASSWORD_MIN_LENGTH = 8;
+export const isValidPassword = (value) =>
+  typeof value === "string" && value.length >= PASSWORD_MIN_LENGTH && value.length <= 128;

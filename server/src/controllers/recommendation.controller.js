@@ -5,6 +5,8 @@ import { ApiResponse } from "../utils/apiResponse.js";
 import { Project } from "../models/project.model.js";
 import { User } from "../models/user.model.js";
 import { CollaborationRequest } from "../models/collaborationRequest.model.js";
+import { getProjectCollaborators } from "../utils/projectMembers.js";
+import { getAiRecommendations } from "../utils/aiRecommendation.js";
 
 /**
  * Returns student recommendations for a project based on required skills.
@@ -18,16 +20,18 @@ import { CollaborationRequest } from "../models/collaborationRequest.model.js";
  * - Calculates match percentage based on matching required skills.
  * - Includes existing collaboration request status.
  * - Handles projects with empty or missing required skills.
+ * - With ?ai=1 also asks Gemini to rank eligible students (see aiRecommendation.js).
  */
 export const getTeammateRecommendations = asyncHandler(async (req, res) => {
   const { projectId } = req.params;
+  const wantAi = req.query.ai === "1";
 
   if (!mongoose.isValidObjectId(projectId)) {
     throw new ApiError(400, "Invalid project id");
   }
 
   const project = await Project.findById(projectId).select(
-    "title category techStack requiredSkills userId isDeleted"
+    "title description category techStack requiredSkills userId isDeleted"
   );
 
   if (!project || project.isDeleted) {
@@ -65,7 +69,8 @@ export const getTeammateRecommendations = asyncHandler(async (req, res) => {
   const totalRequired = uniqueRequiredSkills.length;
 
   // Handle projects without required skills.
-  if (totalRequired === 0) {
+  // AI ranking still works from the description and tech stack, so only the plain view stops here.
+  if (totalRequired === 0 && !wantAi) {
     return res.status(200).json(
       new ApiResponse(
         200,
@@ -92,6 +97,7 @@ export const getTeammateRecommendations = asyncHandler(async (req, res) => {
     User.find({
       _id: { $ne: req.user._id },
       isBanned: { $ne: true },
+      isSuspended: { $ne: true },
     })
       .select("userName fullName avatar bio skills githubLink createdAt")
       .lean(),
@@ -153,9 +159,9 @@ export const getTeammateRecommendations = asyncHandler(async (req, res) => {
       }
     }
 
-    const matchPercentage = Math.round(
-      (matchingSkills.length / totalRequired) * 100
-    );
+    const matchPercentage = totalRequired
+      ? Math.round((matchingSkills.length / totalRequired) * 100)
+      : 0;
 
     const existingRequest = requestStatusMap.get(String(student._id)) || null;
 
@@ -195,6 +201,20 @@ export const getTeammateRecommendations = asyncHandler(async (req, res) => {
     );
   });
 
+  let ai;
+  if (wantAi) {
+    // Members and anyone with a pending/approved request are never sent to the model.
+    const collaborators = await getProjectCollaborators(project._id, project.userId, "skills");
+    const memberIds = new Set(collaborators.map((member) => String(member._id)));
+    const eligible = recommendations.filter(
+      (student) =>
+        !memberIds.has(String(student._id)) &&
+        !["pending", "approved"].includes(student.collaborationStatus)
+    );
+    const teamSkills = [req.user.skills, ...collaborators.map((member) => member.skills)].flat().filter(Boolean);
+    ai = await getAiRecommendations(project, teamSkills, eligible);
+  }
+
   return res.status(200).json(
     new ApiResponse(
       200,
@@ -207,8 +227,9 @@ export const getTeammateRecommendations = asyncHandler(async (req, res) => {
         },
         totalRequired,
         totalEligibleStudents: students.length,
-        hasRequiredSkills: true,
+        hasRequiredSkills: totalRequired > 0,
         recommendations: matchingRecommendations,
+        ...(ai && { ai }),
       },
       "Teammate recommendations fetched successfully"
     )
