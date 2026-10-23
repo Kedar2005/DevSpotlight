@@ -108,6 +108,13 @@ function ProjectDetailsView({ id }) {
   }
 
   const owner = project.userId;
+  // The owner is listed once on top; drop them (and repeats) from the collaborator list by id.
+  const collaborators = (project.collaborators || []).filter(
+    (person, index, list) =>
+      person?._id &&
+      String(person._id) !== String(owner?._id) &&
+      list.findIndex((p) => String(p?._id) === String(person._id)) === index
+  );
   const isOwner = Boolean(user && owner?._id === user._id);
   const images = project.images || [];
 
@@ -466,15 +473,18 @@ function ProjectDetailsView({ id }) {
                   <div className="flex items-center gap-2 min-w-0">
                     <Avatar user={owner} size="xs" />
                     <span className="truncate font-medium text-foreground">
-                      @{owner?.userName}
+                      {owner?.fullName || (owner?.userName ? `@${owner.userName}` : "Unknown user")}
                     </span>
+                    {owner?.fullName && owner?.userName && (
+                      <span className="truncate text-muted-foreground">@{owner.userName}</span>
+                    )}
                   </div>
                   <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                    Author
+                    Owner
                   </span>
                 </Link>
               </li>
-              {(project.collaborators || []).map((person) => (
+              {collaborators.map((person) => (
                 <li key={person._id}>
                   <Link
                     to={`/u/${person.userName}`}
@@ -483,8 +493,11 @@ function ProjectDetailsView({ id }) {
                     <div className="flex items-center gap-2 min-w-0">
                       <Avatar user={person} size="xs" />
                       <span className="truncate font-medium text-foreground">
-                        @{person.userName}
+                        {person.fullName || (person.userName ? `@${person.userName}` : "Unknown user")}
                       </span>
+                      {person.fullName && person.userName && (
+                        <span className="truncate text-muted-foreground">@{person.userName}</span>
+                      )}
                     </div>
                     <span className="rounded bg-emerald-50 text-emerald-700 px-1.5 py-0.5 text-[10px] font-medium">
                       Collaborator

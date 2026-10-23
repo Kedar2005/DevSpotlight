@@ -9,6 +9,7 @@ import {
   submitProjectToRoom,
   getPublicShowcase,
   getPublicColleges,
+  getMyHackathons,
 } from "../controllers/hackathon.controller.js";
 
 const router = Router();
@@ -16,6 +17,9 @@ const router = Router();
 // Public showcase & active colleges lookup
 router.route("/showcase").get(getPublicShowcase);
 router.route("/colleges").get(getPublicColleges);
+
+// Must come before "/:idOrSlug" so "mine" is not read as a slug.
+router.route("/mine").get(verifyJWT, getMyHackathons);
 
 // Hackathons discovery & details
 router.route("/").get(optionalVerifyJWT, getHackathons);

@@ -1,50 +1,49 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import {
-  Upload,
-  ChevronLeft,
-  AlertCircle,
-  CheckCircle,
-  Plus
-} from "lucide-react";
+import { ChevronLeft, Plus } from "lucide-react";
 import { getHackathonRoom, submitProjectToRoom } from "../../api/hackathon.api";
 import { getMyProjects } from "../../api/project.api";
+import { useAuth } from "../../hooks/useAuth";
+import { getErrorMessage } from "../../lib/errors";
+import { formatDate } from "../../lib/hackathon";
+import { Button } from "../../components/ui/button";
+import { Select } from "../../components/ui/select";
+import { Textarea } from "../../components/ui/textarea";
+import { Alert } from "../../components/ui/alert";
+import { LoadingState } from "../../components/shared/PageState";
 
 export default function HackathonProjectSubmission() {
   const { roomId } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   const [room, setRoom] = useState(null);
-  const [userProjects, setUserProjects] = useState([]);
-  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [projects, setProjects] = useState([]);
+  const [projectId, setProjectId] = useState("");
+  const [teamMembers, setTeamMembers] = useState([]);
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
     let active = true;
-
     Promise.all([getHackathonRoom(roomId), getMyProjects()])
-      .then(([roomData, projectsData]) => {
+      .then(([roomData, projectData]) => {
         if (!active) return;
+        const live = (projectData || []).filter((p) => !p.isDeleted);
         setRoom(roomData);
-        setUserProjects(projectsData || []);
-        if (projectsData && projectsData.length > 0) {
-          setSelectedProjectId(projectsData[0]._id);
-        }
-        setError("");
+        setProjects(live);
+        setProjectId(live[0]?._id || "");
       })
       .catch((err) => {
-        if (!active) return;
-        setError(err?.response?.data?.message || "Failed to initialize submission form");
+        if (active) setLoadError(getErrorMessage(err, "Failed to load the submission form."));
       })
       .finally(() => {
-        if (!active) return;
-        setLoading(false);
+        if (active) setLoading(false);
       });
-
     return () => {
       active = false;
     };
@@ -52,160 +51,144 @@ export default function HackathonProjectSubmission() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!selectedProjectId) {
-      setError("Please select a project to submit.");
+    if (!projectId) {
+      setError("Select a project to submit.");
       return;
     }
-
+    setSubmitting(true);
+    setError("");
     try {
-      setSubmitting(true);
-      setError("");
-      await submitProjectToRoom(roomId, {
-        projectId: selectedProjectId,
-        notes,
-      });
-
+      await submitProjectToRoom(roomId, { projectId, notes, teamMembers });
       setSuccess(true);
-      setTimeout(() => {
-        navigate(`/hackathon/room/${roomId}`);
-      }, 1500);
+      setTimeout(() => navigate(`/hackathon/room/${roomId}`), 1200);
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to submit project");
+      setError(getErrorMessage(err, "Failed to submit project."));
     } finally {
       setSubmitting(false);
     }
   };
 
-  if (loading) {
+  if (loading) return <LoadingState label="Loading submission form…" />;
+
+  if (loadError || !room) {
     return (
-      <div className="min-h-[60vh] flex flex-col items-center justify-center text-slate-400 gap-3">
-        <div className="h-8 w-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-        <span className="text-sm">Loading submission workspace...</span>
+      <div className="mx-auto max-w-2xl space-y-4 px-4 py-12">
+        <Alert tone="error">{loadError || "Room not found."}</Alert>
+        <Link to="/hackathons" className="text-sm text-primary hover:underline">
+          Back to hackathons
+        </Link>
       </div>
     );
   }
 
-  const selectedProject = userProjects.find((p) => p._id === selectedProjectId);
+  const h = room.hackathon;
+  const isTeam = h.participationMode === "team";
+  const maxExtraMembers = Math.max((h.maximumTeamSize || 4) - 1, 0);
+  const otherParticipants = (room.participants || []).filter((p) => p.user && String(p.user._id) !== String(user?._id));
+
+  const toggleMember = (id) =>
+    setTeamMembers((current) => (current.includes(id) ? current.filter((m) => m !== id) : [...current, id]));
 
   return (
-    <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-      {/* Top back button */}
+    <div className="mx-auto max-w-2xl space-y-6 px-4 py-8 sm:px-6">
       <Link
         to={`/hackathon/room/${roomId}`}
-        className="text-xs font-semibold text-slate-400 hover:text-white flex items-center gap-1.5 transition"
+        className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
       >
-        <ChevronLeft className="h-4 w-4" /> Back to Room
+        <ChevronLeft className="h-4 w-4" aria-hidden="true" /> Back to room
       </Link>
 
-      <div className="p-8 rounded-3xl border border-white/10 bg-slate-900/60 shadow-2xl space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
-            <Upload className="h-6 w-6 text-indigo-400" />
-            Submit Project to Hackathon
-          </h1>
-          <p className="text-sm text-slate-400 mt-1">
-            Submitting to: <strong className="text-white">{room?.hackathon?.title}</strong>
-          </p>
-        </div>
+      <div className="rounded-lg border border-border bg-card p-6">
+        <h1 className="text-xl font-semibold tracking-tight">Submit a project</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {h.title} · submissions close {formatDate(h.endDate, true)}
+        </p>
 
-        {error && (
-          <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
-
-        {success && (
-          <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs flex items-center gap-2">
-            <CheckCircle className="h-4 w-4 shrink-0" />
-            <span>Project submitted successfully! Redirecting to room gallery...</span>
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Project Selection */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-medium text-slate-300">
-                Select One of Your Projects *
-              </label>
-              <Link
-                to="/projects/create"
-                target="_blank"
-                className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
-              >
-                <Plus className="h-3 w-3" /> Create New Project
+        {success ? (
+          <Alert tone="success" className="mt-5">
+            Project submitted. Returning to the room…
+          </Alert>
+        ) : projects.length === 0 ? (
+          <div className="mt-5 space-y-3">
+            <Alert tone="info">You need a project on DevSpotlight before you can submit.</Alert>
+            <Button asChild>
+              <Link to="/create-project">
+                <Plus className="h-4 w-4" aria-hidden="true" /> Create a project
               </Link>
-            </div>
+            </Button>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="mt-5 space-y-4">
+            {error && <Alert tone="error">{error}</Alert>}
 
-            {userProjects.length === 0 ? (
-              <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs space-y-2">
-                <p>You haven't created any projects on DevSpotlight yet.</p>
-                <Link
-                  to="/projects/create"
-                  className="inline-block px-3 py-1.5 rounded-lg bg-amber-500 text-slate-950 font-bold hover:bg-amber-400 transition"
-                >
-                  Create Project First
-                </Link>
-              </div>
-            ) : (
-              <select
-                value={selectedProjectId}
-                onChange={(e) => setSelectedProjectId(e.target.value)}
-                required
-                className="w-full bg-slate-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500 transition"
-              >
-                {userProjects.map((proj) => (
-                  <option key={proj._id} value={proj._id}>
-                    {proj.title} ({proj.category})
+            <div className="space-y-1.5">
+              <label htmlFor="project" className="text-xs font-medium">
+                Project *
+              </label>
+              <Select id="project" value={projectId} onChange={(e) => setProjectId(e.target.value)} required>
+                {projects.map((p) => (
+                  <option key={p._id} value={p._id}>
+                    {p.title}
                   </option>
                 ))}
-              </select>
-            )}
-          </div>
-
-          {/* Selected Project Preview Card */}
-          {selectedProject && (
-            <div className="p-4 rounded-xl border border-white/5 bg-slate-950/60 space-y-2 text-xs">
-              <div className="font-semibold text-white text-sm">{selectedProject.title}</div>
-              <p className="text-slate-400 line-clamp-2">{selectedProject.description}</p>
-              <div className="flex items-center gap-3 text-slate-500 pt-1">
-                {selectedProject.githubLink && <span>GitHub Linked</span>}
-                {selectedProject.liveLink && <span>Live Demo Linked</span>}
-              </div>
+              </Select>
             </div>
-          )}
 
-          {/* Submission Notes / Pitch Link */}
-          <div className="space-y-2">
-            <label className="text-xs font-medium text-slate-300">
-              Submission Notes / Slide Deck / Video Demo URL
-            </label>
-            <textarea
-              rows={4}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Include link to your presentation slides, loom video demo, or instructions for the judges..."
-              className="w-full bg-slate-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500 transition"
-            />
-          </div>
+            {isTeam && (
+              <fieldset className="space-y-2 rounded-md border border-border p-3">
+                <legend className="px-1 text-xs font-medium">
+                  Team members (up to {maxExtraMembers} besides you)
+                </legend>
+                {otherParticipants.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No other registered participants yet.</p>
+                ) : (
+                  <div className="grid max-h-48 gap-1.5 overflow-y-auto">
+                    {otherParticipants.map((p) => {
+                      const id = p.user._id;
+                      const checked = teamMembers.includes(id);
+                      return (
+                        <label key={p._id} className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={!checked && teamMembers.length >= maxExtraMembers}
+                            onChange={() => toggleMember(id)}
+                          />
+                          {p.user.fullName || p.user.userName}
+                          {p.teamName && <span className="text-xs text-muted-foreground">· Team {p.teamName}</span>}
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </fieldset>
+            )}
 
-          <div className="flex items-center justify-end gap-3 pt-4 border-t border-white/10">
-            <Link
-              to={`/hackathon/room/${roomId}`}
-              className="px-4 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-white"
-            >
-              Cancel
-            </Link>
-            <button
-              type="submit"
-              disabled={submitting || userProjects.length === 0}
-              className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-semibold text-xs shadow-lg shadow-indigo-500/20 transition disabled:opacity-50 cursor-pointer"
-            >
-              {submitting ? "Submitting..." : "Submit to Hackathon"}
-            </button>
-          </div>
-        </form>
+            <div className="space-y-1.5">
+              <label htmlFor="notes" className="text-xs font-medium">
+                Notes for the organizers
+              </label>
+              <Textarea
+                id="notes"
+                rows={4}
+                maxLength={1000}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Optional: what you built, how to run it, anything the judges should know."
+              />
+              <p className="text-[11px] text-muted-foreground">Visible only to your team and the organizers.</p>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-border pt-4">
+              <Button asChild type="button" variant="outline">
+                <Link to={`/hackathon/room/${roomId}`}>Cancel</Link>
+              </Button>
+              <Button type="submit" disabled={submitting}>
+                {submitting ? "Submitting…" : "Submit project"}
+              </Button>
+            </div>
+          </form>
+        )}
       </div>
     </div>
   );

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useAuth } from "../../hooks/useAuth";
 import { getErrorMessage } from "../../lib/errors";
 import { Button } from "../../components/ui/button";
@@ -13,15 +13,14 @@ export function Login() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const { login } = useAuth();
-  const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
     setSubmitting(true);
     try {
+      // PublicRoute (App.jsx) redirects by the role the server returned.
       await login({ email, password });
-      navigate("/dashboard");
     } catch (err) {
       setError(getErrorMessage(err, "Failed to log in"));
     } finally {

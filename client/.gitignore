@@ -25,3 +25,7 @@ dist-ssr
 *.sw?
 
 
+
+# Local build / lint output
+build-check
+*_output*.txt

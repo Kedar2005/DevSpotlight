@@ -344,6 +344,7 @@ const runSuite = async () => {
       token: studentToken,
       body: {
         teamName: "CodeCrafters",
+        acceptRules: true,
       },
     });
 

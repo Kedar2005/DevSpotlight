@@ -13,6 +13,7 @@ import {
   parseStringArray,
 } from "../utils/validators.js";
 import { removeTempFiles } from "../utils/tempFiles.js";
+import { getProjectCollaborators } from "../utils/projectMembers.js";
 import { attachViewerState, getEngagementCounts } from "../utils/projectViewer.js";
 import { MAX_PROJECT_IMAGES, PROJECT_CATEGORIES } from "../constants.js";
 
@@ -231,22 +232,11 @@ const getProjectById = asyncHandler(async (req, res) => {
     { timestamps: false }
   );
 
-  const [likeCount, commentCount, approvedRequests] = await Promise.all([
+  const [likeCount, commentCount, collaborators] = await Promise.all([
     Like.countDocuments({ project: project._id }),
     Comment.countDocuments({ project: project._id }),
-    CollaborationRequest.find({ project: project._id, status: "approved" })
-      .sort({ respondedAt: -1 })
-      .limit(20)
-      .populate("sender", OWNER_FIELDS)
-      .lean(),
+    getProjectCollaborators(project._id, project.userId?._id, OWNER_FIELDS),
   ]);
-
-  const collaborators = approvedRequests
-    .filter((request) => request.sender)
-    .map((request) => ({
-      ...request.sender,
-      since: request.respondedAt || request.updatedAt,
-    }));
 
   const [payload] = await attachViewerState(
     [

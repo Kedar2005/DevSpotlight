@@ -90,4 +90,3 @@ export function AuthProvider({ children }) {
   );
 }
 
-export { useAuth } from "../hooks/useAuth";

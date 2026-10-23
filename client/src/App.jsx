@@ -1,4 +1,5 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
+import { lazy } from "react";
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "./hooks/useAuth";
 
 import { AuthLayout } from "./components/layout/AuthLayout";
@@ -22,27 +23,29 @@ import { Register } from "./pages/auth/Register";
 import { ForgotPassword } from "./pages/auth/ForgotPassword";
 import { ResetPassword } from "./pages/auth/ResetPassword";
 
-// Admin Pages
-import { AdminOverview } from "./pages/admin/AdminOverview";
-import { AdminUsers } from "./pages/admin/AdminUsers";
-import { AdminProjects } from "./pages/admin/AdminProjects";
-import { AdminColleges } from "./pages/admin/AdminColleges";
-import AdminHackathons from "./pages/admin/AdminHackathons";
-import AdminHackathonRooms from "./pages/admin/AdminHackathonRooms";
-import AdminReports from "./pages/admin/AdminReports";
-import AdminSettings from "./pages/admin/AdminSettings";
-
-// Hackathon Pages
-import HackathonDiscovery from "./pages/hackathons/HackathonDiscovery";
-import HackathonDetails from "./pages/hackathons/HackathonDetails";
-import HackathonRoom from "./pages/hackathons/HackathonRoom";
-import HackathonProjectSubmission from "./pages/hackathons/HackathonProjectSubmission";
-import PublicHackathonShowcase from "./pages/hackathons/PublicHackathonShowcase";
+// Admin and hackathon pages load on demand, so most visitors never download them.
+// The layouts wrap their <Outlet /> in <Suspense>.
+const AdminOverview = lazy(() => import("./pages/admin/AdminOverview").then((m) => ({ default: m.AdminOverview })));
+const AdminUsers = lazy(() => import("./pages/admin/AdminUsers").then((m) => ({ default: m.AdminUsers })));
+const AdminProjects = lazy(() => import("./pages/admin/AdminProjects").then((m) => ({ default: m.AdminProjects })));
+const AdminColleges = lazy(() => import("./pages/admin/AdminColleges").then((m) => ({ default: m.AdminColleges })));
+const AdminHackathons = lazy(() => import("./pages/admin/AdminHackathons"));
+const AdminHackathonRooms = lazy(() => import("./pages/admin/AdminHackathonRooms"));
+const AdminReports = lazy(() => import("./pages/admin/AdminReports"));
+const AdminSettings = lazy(() => import("./pages/admin/AdminSettings"));
+const AdminSubmissions = lazy(() => import("./pages/admin/AdminSubmissions"));
+const HackathonDiscovery = lazy(() => import("./pages/hackathons/HackathonDiscovery"));
+const HackathonDetails = lazy(() => import("./pages/hackathons/HackathonDetails"));
+const HackathonRoom = lazy(() => import("./pages/hackathons/HackathonRoom"));
+const HackathonProjectSubmission = lazy(() => import("./pages/hackathons/HackathonProjectSubmission"));
+const PublicHackathonShowcase = lazy(() => import("./pages/hackathons/PublicHackathonShowcase"));
+const MyHackathons = lazy(() => import("./pages/hackathons/MyHackathons"));
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated, loading } = useAuth();
+  const location = useLocation();
   if (loading) return null;
-  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (!isAuthenticated) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   return children;
 }
 
@@ -54,10 +57,21 @@ function AdminRoute({ children }) {
   return children;
 }
 
+// Where a signed-in user lands. The role is the one the server returned at login or /auth/me;
+// it only picks a page, every admin API checks the role again on the server.
+function homeFor(user, from) {
+  if (user?.role === "admin") return "/admin";
+  // Only same-app paths, so a crafted link can't redirect off-site.
+  return typeof from === "string" && from.startsWith("/") && !from.startsWith("//") && !from.startsWith("/admin")
+    ? from
+    : "/dashboard";
+}
+
 function PublicRoute({ children }) {
-  const { isAuthenticated, loading } = useAuth();
+  const { user, isAuthenticated, loading } = useAuth();
+  const location = useLocation();
   if (loading) return null;
-  if (isAuthenticated) return <Navigate to="/dashboard" replace />;
+  if (isAuthenticated) return <Navigate to={homeFor(user, location.state?.from)} replace />;
   return children;
 }
 
@@ -87,9 +101,11 @@ function App() {
           <Route path="/hackathons" element={<HackathonDiscovery />} />
           <Route path="/hackathon/:id" element={<HackathonDetails />} />
           <Route path="/hackathons/showcase" element={<PublicHackathonShowcase />} />
+          <Route path="/my-hackathons" element={<ProtectedRoute><MyHackathons /></ProtectedRoute>} />
 
           {/* Private Hackathon Room & Project Submission */}
-          <Route path="/hackathon/room/:roomId" element={<ProtectedRoute><HackathonRoom /></ProtectedRoute>} />
+          {/* Server decides access: published rooms are public, others need a participant or admin login. */}
+          <Route path="/hackathon/room/:roomId" element={<HackathonRoom />} />
           <Route path="/hackathon/room/:roomId/submit" element={<ProtectedRoute><HackathonProjectSubmission /></ProtectedRoute>} />
         </Route>
 
@@ -103,11 +119,13 @@ function App() {
           }
         >
           <Route index element={<AdminOverview />} />
-          <Route path="users" element={<AdminUsers />} />
+          <Route path="students" element={<AdminUsers />} />
+          <Route path="users" element={<Navigate to="/admin/students" replace />} />
           <Route path="projects" element={<AdminProjects />} />
           <Route path="colleges" element={<AdminColleges />} />
           <Route path="hackathons" element={<AdminHackathons />} />
           <Route path="rooms" element={<AdminHackathonRooms />} />
+          <Route path="submissions" element={<AdminSubmissions />} />
           <Route path="reports" element={<AdminReports />} />
           <Route path="settings" element={<AdminSettings />} />
         </Route>

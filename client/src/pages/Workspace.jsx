@@ -338,7 +338,7 @@ export function Workspace() {
             </div>
 
             <span className="text-muted-foreground">•</span>
-            <span className="text-muted-foreground">{members.length} Team Members</span>
+            <span className="text-muted-foreground">{members.length} {members.length === 1 ? "Team Member" : "Team Members"}</span>
 
             {project.githubLink && (
               <>
@@ -378,8 +378,8 @@ export function Workspace() {
             ))}
           </div>
           <div className="text-xs pl-1">
-            <p className="font-semibold text-foreground">{members.length} Active</p>
-            <p className="text-[10px] text-muted-foreground">Collaborators</p>
+            <p className="font-semibold text-foreground">{members.length - 1} Active</p>
+            <p className="text-[10px] text-muted-foreground">{members.length - 1 === 1 ? "Collaborator" : "Collaborators"}</p>
           </div>
         </div>
       </div>

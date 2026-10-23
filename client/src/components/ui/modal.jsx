@@ -2,7 +2,7 @@ import { useEffect } from "react"
 import { X } from "lucide-react"
 import { Button } from "./button"
 
-export function Modal({ open, onClose, title, description, children }) {
+export function Modal({ open, onClose, title, description, children, wide = false }) {
   useEffect(() => {
     if (!open) return undefined
     const onKey = (event) => event.key === "Escape" && onClose()
@@ -18,7 +18,7 @@ export function Modal({ open, onClose, title, description, children }) {
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="w-full max-w-md rounded-lg border bg-card shadow-lg"
+        className={`flex max-h-[90vh] w-full flex-col rounded-lg border bg-card shadow-lg ${wide ? "max-w-2xl" : "max-w-md"}`}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
@@ -30,7 +30,7 @@ export function Modal({ open, onClose, title, description, children }) {
             <X className="h-4 w-4" />
           </Button>
         </div>
-        <div className="px-5 py-4">{children}</div>
+        <div className="overflow-y-auto px-5 py-4">{children}</div>
       </div>
     </div>
   )

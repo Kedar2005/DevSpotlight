@@ -12,6 +12,7 @@ import {
   LogOut,
   Trophy,
   ShieldAlert,
+  CalendarCheck,
 } from "lucide-react";
 import { useAuth } from "../../hooks/useAuth";
 import { getReceivedRequests } from "../../api/collaboration.api";
@@ -27,6 +28,7 @@ const authNavItems = [
   { title: "Explore Projects", href: "/feed", icon: Compass },
   { title: "Find Teammates", href: "/find-teammates", icon: Sparkles },
   { title: "Hackathons", href: "/hackathons", icon: Trophy },
+  { title: "My Hackathons", href: "/my-hackathons", icon: CalendarCheck },
   { title: "Collaboration", href: "/requests", icon: Users, badgeKey: "pending" },
   { title: "Notifications", href: "/notifications", icon: Bell, badgeKey: "pending" },
   { title: "My Profile", href: "/profile", icon: User },
@@ -40,17 +42,23 @@ export function Sidebar({ collapsed = false, mobileOpen = false, onNavigate }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsRef = useRef(null);
 
-  // Count of requests waiting for the user's answer
+  // Count of requests waiting for the user's answer. Requests only change on these pages,
+  // so refetch when entering/leaving them and when the tab regains focus, not on every route.
+  const requestPage = ["/requests", "/notifications", "/dashboard"].find((p) => pathname.startsWith(p)) || "other";
   useEffect(() => {
     if (!isAuthenticated) return undefined;
     let active = true;
-    getReceivedRequests("pending")
-      .then((requests) => active && setPending(requests?.length || 0))
-      .catch(() => active && setPending(0));
+    const load = () =>
+      getReceivedRequests("pending")
+        .then((requests) => active && setPending(requests?.length || 0))
+        .catch(() => active && setPending(0));
+    load();
+    window.addEventListener("focus", load);
     return () => {
       active = false;
+      window.removeEventListener("focus", load);
     };
-  }, [isAuthenticated, pathname]);
+  }, [isAuthenticated, requestPage]);
 
   // Close settings popover when clicking outside
   useEffect(() => {
@@ -77,7 +85,16 @@ export function Sidebar({ collapsed = false, mobileOpen = false, onNavigate }) {
     navigate("/login");
   };
 
-  const items = isAuthenticated ? authNavItems : guestNavItems;
+  // Admins get a top-level entry; it used to be hidden inside the Settings popover.
+  const items = !isAuthenticated
+    ? guestNavItems
+    : user?.role === "admin"
+      ? [
+          { title: "Admin Dashboard", href: "/admin", icon: ShieldAlert },
+          // Admins cannot register for hackathons, so their list would always be empty.
+          ...authNavItems.filter((item) => item.href !== "/my-hackathons"),
+        ]
+      : authNavItems;
   const count = isAuthenticated ? pending : 0;
 
   return (

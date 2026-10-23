@@ -59,12 +59,15 @@ const verifyJWT = asyncHandler(async (req, _, next) => {
  * Reusable role check middleware for admin-only endpoints.
  * Requires verifyJWT to have run first.
  */
-export const requireAdmin = (req, _res, next) => {
+// Responds directly: a thrown error here would reach Express's HTML error page, not our JSON shape.
+export const requireAdmin = (req, res, next) => {
   if (!req.user) {
-    throw new ApiError(401, "Authentication required");
+    return res.status(401).json({ success: false, message: "Authentication required" });
   }
   if (req.user.role !== "admin") {
-    throw new ApiError(403, "Access denied. Administrator privileges required.");
+    return res
+      .status(403)
+      .json({ success: false, message: "Access denied. Administrator privileges required." });
   }
   next();
 };

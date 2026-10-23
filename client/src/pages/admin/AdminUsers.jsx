@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   Users,
   Search,
@@ -13,6 +13,7 @@ import {
   getAdminUsers,
   updateUserSuspension,
   getUserProjects,
+  getAdminColleges,
 } from "../../api/admin.api";
 import { getErrorMessage } from "../../lib/errors";
 import { Avatar } from "../../components/ui/avatar";
@@ -24,6 +25,7 @@ import { Alert } from "../../components/ui/alert";
 import { Modal } from "../../components/ui/modal";
 
 export function AdminUsers() {
+  const [searchParams] = useSearchParams();
   const [users, setUsers] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -37,6 +39,14 @@ export function AdminUsers() {
   const [searchQuery, setSearchQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [collegeFilter, setCollegeFilter] = useState(searchParams.get("college") || "all");
+  const [colleges, setColleges] = useState([]);
+
+  useEffect(() => {
+    getAdminColleges()
+      .then((data) => setColleges(data || []))
+      .catch(() => setColleges([]));
+  }, []);
 
   // User Projects modal
   const [selectedUserForProjects, setSelectedUserForProjects] = useState(null);
@@ -58,6 +68,7 @@ export function AdminUsers() {
       q: searchQuery.trim() || undefined,
       role: roleFilter !== "all" ? roleFilter : undefined,
       status: statusFilter !== "all" ? statusFilter : undefined,
+      college: collegeFilter !== "all" ? collegeFilter : undefined,
     })
       .then((data) => {
         if (!active) return;
@@ -78,7 +89,9 @@ export function AdminUsers() {
     return () => {
       active = false;
     };
-  }, [page, roleFilter, statusFilter, reloadKey]);
+    // searchQuery is applied on submit (reloadKey), not on every keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, roleFilter, statusFilter, collegeFilter, reloadKey]);
 
   const fetchUsers = () => {
     setLoading(true);
@@ -146,15 +159,15 @@ export function AdminUsers() {
       <div className="flex flex-col gap-2 border-b border-border pb-5 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">
-            User Management
+            Students
           </h1>
           <p className="mt-1 text-xs sm:text-sm text-muted-foreground">
-            Browse registered student profiles, view project submissions, and moderate accounts.
+            Search students, view their profiles and projects, and activate or suspend accounts.
           </p>
         </div>
 
         <span className="text-xs font-semibold text-muted-foreground font-code">
-          Total Users: {total}
+          {total} accounts
         </span>
       </div>
 
@@ -190,8 +203,9 @@ export function AdminUsers() {
           </Button>
         </form>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Select
+            aria-label="Filter by role"
             value={roleFilter}
             onChange={(e) => {
               setRoleFilter(e.target.value);
@@ -205,6 +219,7 @@ export function AdminUsers() {
           </Select>
 
           <Select
+            aria-label="Filter by account status"
             value={statusFilter}
             onChange={(e) => {
               setStatusFilter(e.target.value);
@@ -215,6 +230,23 @@ export function AdminUsers() {
             <option value="all">All Status</option>
             <option value="active">Active</option>
             <option value="suspended">Suspended</option>
+          </Select>
+
+          <Select
+            aria-label="Filter by college"
+            value={collegeFilter}
+            onChange={(e) => {
+              setCollegeFilter(e.target.value);
+              setPage(1);
+            }}
+            className="h-8 text-xs w-40 bg-background"
+          >
+            <option value="all">All Colleges</option>
+            {colleges.map((c) => (
+              <option key={c._id} value={c._id}>
+                {c.name}
+              </option>
+            ))}
           </Select>
         </div>
       </div>
@@ -309,14 +341,14 @@ export function AdminUsers() {
                           variant="outline"
                           size="xs"
                           onClick={() => handleViewProjects(u)}
-                          title="View submitted projects"
+                          title="View profile and projects"
                         >
                           <FolderGit2 className="mr-1 h-3 w-3" />
-                          Projects
+                          Details
                         </Button>
 
                         <Button asChild variant="outline" size="xs">
-                          <Link to={`/u/${u.userName}`} target="_blank">
+                          <Link to={`/u/${u.userName}`} target="_blank" aria-label={`Open public profile of ${u.userName}`}>
                             <ExternalLink className="h-3 w-3" />
                           </Link>
                         </Button>
@@ -370,10 +402,23 @@ export function AdminUsers() {
       <Modal
         open={Boolean(selectedUserForProjects)}
         onClose={() => setSelectedUserForProjects(null)}
-        title={selectedUserForProjects ? `Projects by ${selectedUserForProjects.fullName || selectedUserForProjects.userName}` : "User Projects"}
-        description="All projects authored by this user, including active and moderated builds."
+        title={selectedUserForProjects ? selectedUserForProjects.fullName || selectedUserForProjects.userName : "Student"}
+        description="Profile details and all projects by this student, including moderated ones."
+        wide
       >
         <div className="space-y-3">
+          {selectedUserForProjects && (
+            <dl className="grid grid-cols-1 gap-x-4 gap-y-2 rounded-md border border-border p-3 text-xs sm:grid-cols-2">
+              <div><dt className="text-muted-foreground">Username</dt><dd className="font-medium">@{selectedUserForProjects.userName}</dd></div>
+              <div><dt className="text-muted-foreground">Email</dt><dd className="font-medium break-all">{selectedUserForProjects.email}</dd></div>
+              <div><dt className="text-muted-foreground">College</dt><dd className="font-medium">{selectedUserForProjects.collegeName || "Not specified"}</dd></div>
+              <div><dt className="text-muted-foreground">Joined</dt><dd className="font-medium">{new Date(selectedUserForProjects.createdAt).toLocaleDateString()}</dd></div>
+              <div><dt className="text-muted-foreground">Status</dt><dd className="font-medium">{selectedUserForProjects.isSuspended ? `Suspended${selectedUserForProjects.suspendedReason ? ` — ${selectedUserForProjects.suspendedReason}` : ""}` : "Active"}</dd></div>
+              <div><dt className="text-muted-foreground">Skills</dt><dd className="font-medium">{selectedUserForProjects.skills?.length ? selectedUserForProjects.skills.join(", ") : "—"}</dd></div>
+              {selectedUserForProjects.bio && <div className="sm:col-span-2"><dt className="text-muted-foreground">Bio</dt><dd>{selectedUserForProjects.bio}</dd></div>}
+            </dl>
+          )}
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Projects</h3>
           {loadingProjects ? (
             <div className="p-8 text-center text-xs text-muted-foreground">
               <RotateCw className="mx-auto h-4 w-4 animate-spin text-primary mb-2" />

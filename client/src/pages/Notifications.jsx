@@ -91,7 +91,9 @@ export function Notifications() {
                               <span className="font-semibold">
                                 {req.sender?.fullName || `@${req.sender?.userName}`}
                               </span>{" "}
-                              requested to collaborate on{" "}
+                              {String(req.project?.userId) === String(req.sender?._id)
+                                ? "invited you to collaborate on"
+                                : "requested to collaborate on"}{" "}
                               <span className="font-medium text-foreground">
                                 {req.project?.title || "your project"}
                               </span>

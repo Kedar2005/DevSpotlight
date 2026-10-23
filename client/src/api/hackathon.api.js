@@ -41,3 +41,8 @@ export const getPublicColleges = async () => {
   const { data } = await http.get("/hackathons/colleges");
   return data.data;
 };
+
+export const getMyHackathons = async () => {
+  const { data } = await http.get("/hackathons/mine");
+  return data.data;
+};
